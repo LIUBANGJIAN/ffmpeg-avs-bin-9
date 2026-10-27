@@ -154,6 +154,15 @@ build_ffmpeg() {
   # AVS3 编码器补丁必须在 configure 之前打 —— 否则 --enable-libuavs3e 是未知选项
   apply_ffmpeg_avs3_patch "$FF_DIR"
 
+  # GitHub 的 tag tarball 里既没有 VERSION 文件也没有 .git，而 ffbuild/version.sh
+  # 的第一个动作是 `git describe --tags --always`。在「没有 .git 的子目录」里跑这句，
+  # git 会**向父目录逐级查找** —— 在 Actions 里正好命中本项目仓库的 .git，
+  # 于是产物版本串变成我们的 commit sha（实测 `ffprobe version f052ad4`，
+  # 完全看不出是 9.0.2）。
+  #
+  # version.sh 里 `version=$(cat VERSION)` 的优先级高于 revision，写一个就压住它。
+  printf '%s\n' "$FFMPEG_VERSION" > "$FF_DIR/VERSION"
+
   FF_ARGS=(
     "--prefix=$PREFIX"
     --disable-doc
