@@ -1,0 +1,235 @@
+name: build
+
+# 触发方式：
+#   1) 手动（Actions 页面 Run workflow）
+#   2) 推送到 main
+#   3) 打 tag（v*）-> 额外跑一个 release job 把产物挂到 Release
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # 版本只在这里出现一次？不 —— 唯一权威是 scripts/env.sh，
+  # 这里只是给日志看的。真正锁版本的地方是 env.sh 里的 FFMPEG_VERSION。
+  FFMPEG_VERSION: 9.0.2
+
+jobs:
+  # ==========================================================================
+  # Windows x86_64 —— MSYS2 UCRT64
+  # ==========================================================================
+  windows:
+    name: windows-x86_64
+    runs-on: windows-latest
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 MSYS2 工具链
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            base-devel
+            git
+            curl
+            tar
+            zip
+            diffutils
+            autoconf
+            automake
+            libtool
+            gperf
+            python
+            perl
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-nasm
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-meson
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+
+      - name: 缓存源码包
+        uses: actions/cache@v4
+        with:
+          path: work/dl
+          key: dl-win64-${{ hashFiles('scripts/env.sh') }}
+          restore-keys: dl-win64-
+
+      - name: 显示工具链版本
+        run: |
+          gcc --version | head -1
+          cmake --version | head -1
+          meson --version
+          nasm --version | head -1
+
+      - name: 构建
+        # 用 bash 显式调用，不依赖文件的可执行位：
+        # Windows 上 checkout 出来的脚本可能丢 x 位，MSYS2 里 ./x 仍能跑，
+        # 但在 git 索引里是 644，到 Linux runner 就变成 Permission denied。
+        run: bash ./scripts/build-windows.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-avs-win64
+          path: out/*.zip
+          if-no-files-found: error
+
+  # ==========================================================================
+  # Linux x86_64 —— Alpine(musl) 全静态
+  #
+  # 为什么用 docker run 而不是 job 级 container:
+  #   GitHub 挂进容器的 node 是 glibc 二进制，在 Alpine 上 actions/checkout
+  #   会直接 "not found"。放在 step 里跑 docker 就绕开了这个问题。
+  # ==========================================================================
+  linux:
+    name: linux-x86_64-static
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 缓存源码包
+        uses: actions/cache@v4
+        with:
+          path: work/dl
+          key: dl-linux-${{ hashFiles('scripts/env.sh') }}
+          restore-keys: dl-linux-
+
+      - name: 在 Alpine 容器里构建
+        run: |
+          docker run --rm \
+            -v "$PWD:/src" -w /src \
+            -e FFMPEG_VERSION="$FFMPEG_VERSION" \
+            alpine:3.20 sh -c '
+              set -e
+              # diffutils 必须显式装：Alpine 自带的 diff 是 BusyBox 版，
+              # libvpx 的 configure 会用 `diff --version` 探 GNU diff，
+              # BusyBox 直接报 "unrecognized option: version" → Configuration failed。
+              apk add --no-cache \
+                bash build-base linux-headers nasm cmake meson ninja pkgconf \
+                perl autoconf automake libtool git curl python3 zip file binutils \
+                diffutils gperf \
+                tar xz
+              bash ./scripts/build-linux.sh
+            '
+
+      - name: 校验静态性与架构
+        run: |
+          unzip -o out/*.zip -d /tmp/verify
+          file /tmp/verify/ffmpeg
+          if ldd /tmp/verify/ffmpeg 2>&1 | grep -qi "not a dynamic"; then
+            echo "静态链接确认"
+          else
+            ldd /tmp/verify/ffmpeg || true
+            echo "产物不是纯静态"; exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-avs-linux64-static
+          path: out/*.zip
+          if-no-files-found: error
+
+  # ==========================================================================
+  # Android —— NDK r25c，两个 ABI 并行
+  # ==========================================================================
+  android:
+    name: android-${{ matrix.abi }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: armv7
+            api: 19
+          - abi: arm64
+            api: 21
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装构建依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential nasm cmake meson ninja-build pkg-config \
+            autoconf automake libtool gperf zip unzip file binutils python3
+
+      # NDK 有 600MB+，不缓存的话每次都要重下
+      - name: 缓存 NDK r25c
+        id: ndk-cache
+        uses: actions/cache@v4
+        with:
+          path: /opt/ndk-r25c
+          key: ndk-r25c-linux
+
+      - name: 下载 NDK r25c
+        if: steps.ndk-cache.outputs.cache-hit != 'true'
+        run: |
+          curl -fL --retry 3 -o /tmp/ndk.zip \
+            https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+          unzip -q /tmp/ndk.zip -d /opt
+          mv /opt/android-ndk-r25c /opt/ndk-r25c
+          rm -f /tmp/ndk.zip
+
+      - name: 缓存源码包
+        uses: actions/cache@v4
+        with:
+          path: work/dl
+          key: dl-android-${{ hashFiles('scripts/env.sh') }}
+          restore-keys: dl-android-
+
+      - name: 构建 ${{ matrix.abi }}
+        env:
+          ANDROID_NDK_HOME: /opt/ndk-r25c
+        run: |
+          bash ./scripts/build-android.sh ${{ matrix.abi }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-avs-android-${{ matrix.abi }}
+          path: out/*.zip
+          if-no-files-found: error
+
+  # ==========================================================================
+  # 汇总发布 —— 只在打 tag 时跑
+  # ==========================================================================
+  release:
+    name: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: 列出产物
+        run: ls -lh artifacts
+
+      - name: 生成校验和
+        run: |
+          cd artifacts
+          sha256sum *.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/*.zip
+            artifacts/SHA256SUMS.txt
+          draft: false
+          generate_release_notes: true

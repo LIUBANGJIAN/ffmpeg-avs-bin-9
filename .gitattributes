@@ -1,0 +1,33 @@
+# 所有文本文件一律 LF，禁止 CRLF
+#
+# 本机（Windows）系统级 core.autocrlf=true。若不在此强制声明，
+# git 会把 .sh / .c / .yml 全部转成 CRLF 推送到远端，
+# 导致 Linux / Android runner 上执行 `#!/bin/sh\r` 时报
+# "No such file or directory"，而报错完全看不出根因。
+#
+# 这个文件是构建能否跑通的前提，不要删。
+
+* text=auto eol=lf
+
+*.sh      text eol=lf
+*.c       text eol=lf
+*.h       text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.md      text eol=lf
+*.patch   text eol=lf
+*.diff    text eol=lf
+*.txt     text eol=lf
+.gitignore      text eol=lf
+.gitattributes  text eol=lf
+configure       text eol=lf
+
+# 二进制：不做任何转换
+*.zip   binary
+*.7z    binary
+*.tar   binary
+*.gz    binary
+*.xz    binary
+*.png   binary
+*.ico   binary
+*.exe   binary
