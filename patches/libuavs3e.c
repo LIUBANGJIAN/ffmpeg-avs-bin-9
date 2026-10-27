@@ -231,7 +231,8 @@ static int uavs3e_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
             pkt->flags &= ~AV_PKT_FLAG_KEY;
         }
 				
-#if FF_API_CODED_FRAME 
+// FFmpeg 9.0 已彻底移除 coded_frame 与 FF_API_CODED_FRAME，这段会整段跳空
+#if defined(FF_API_CODED_FRAME) && FF_API_CODED_FRAME
 	FF_DISABLE_DEPRECATION_WARNINGS
 			avctx->coded_frame->pts = stat.pts;
 			switch (stat.type) {
@@ -316,10 +317,25 @@ const FFCodec ff_libuavs3e_encoder = {
     // 谎报一个公共能力 —— 那不是公共 AV_CODEC_CAP_* 的定义域。
     .caps_internal  = FF_CODEC_CAP_NOT_INIT_THREADSAFE |
                       FF_CODEC_CAP_AUTO_THREADS,
+    /* 像素格式声明的写法在 FFmpeg 9.0 变了：
+     *   <= 8.x（libavcodec < 63）: AVCodec.pix_fmts      -> .p.pix_fmts = (数组)
+     *   >= 9.0（libavcodec 63）  : 字段搬进 FFCodec 的匿名 union，
+     *                             只能用 CODEC_PIXFMTS() 宏，且宏会自动补
+     *                             AV_PIX_FMT_NONE 结尾
+     * 这里按「宏在不在」分流，两个大版本共用一份源码。（冒烟 run#1 就是因为
+     * 这一处 `.p.pix_fmts` 报 'does not refer to any field in type AVCodec' 挂掉的。）*/
+#if defined(CODEC_PIXFMTS)
+#if (BIT_DEPTH == 10)
+    CODEC_PIXFMTS(AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV420P10LE),
+#else
+    CODEC_PIXFMTS(AV_PIX_FMT_YUV420P),
+#endif
+#else
 #if (BIT_DEPTH == 10)
     .p.pix_fmts       = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV420P10LE, AV_PIX_FMT_NONE },
 #else
     .p.pix_fmts		= (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE },
+#endif
 #endif
     .p.priv_class     = &uavs3e_class,
     .defaults       = uavs3e_defaults,

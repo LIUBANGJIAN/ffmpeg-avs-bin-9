@@ -33,30 +33,42 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装 MSYS2 工具链
+      # 只装基础环境，**不用 action 的 install 参数**。
+      # 原因：action 的 install 是一次性把 100+ 个包丢给 pacman，2026-10-28 实测
+      # 被 ftp.nluug.nl 以 HTTP 429（限流）打断，整个 job 在 1 分钟就 red 了，
+      # 跟本项目代码一行关系都没有。改成下面自己控制，能换镜像重试。
+      - name: 安装 MSYS2 基础环境
         uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
-          update: true
-          install: >-
-            base-devel
-            git
-            curl
-            tar
-            zip
-            diffutils
-            autoconf
-            automake
-            libtool
-            gperf
-            python
-            perl
-            mingw-w64-ucrt-x86_64-gcc
-            mingw-w64-ucrt-x86_64-nasm
-            mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-meson
-            mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-pkgconf
+          update: false
+          cache: true
+
+      - name: 装工具链（镜像轮换 + 重试）
+        shell: msys2 {0}
+        run: |
+          set -eo pipefail
+          PKGS="base-devel git curl tar zip diffutils autoconf automake libtool gperf
+                python perl mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-nasm
+                mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-meson
+                mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-pkgconf"
+          for M in https://mirror.msys2.org https://repo.msys2.org; do
+            echo "== 使用镜像 $M =="
+            for f in /etc/pacman.d/mirrorlist.mingw /etc/pacman.d/mirrorlist.mingw32 \
+                     /etc/pacman.d/mirrorlist.mingw64 /etc/pacman.d/mirrorlist.ucrt64; do
+              [ -f "$f" ] && printf 'Server = %s/mingw/$repo/\n' "$M" > "$f"
+            done
+            [ -f /etc/pacman.d/mirrorlist.msys ] && \
+              printf 'Server = %s/msys/$arch/\n' "$M" > /etc/pacman.d/mirrorlist.msys
+            if pacman -Sy --noconfirm && pacman -S --noconfirm --needed $PKGS; then
+              echo "== 装包成功（$M）=="
+              exit 0
+            fi
+            echo "== 镜像 $M 失败，换下一个 =="
+            sleep 5
+          done
+          echo "所有镜像都失败"
+          exit 1
 
       - name: 缓存源码包
         uses: actions/cache@v4
