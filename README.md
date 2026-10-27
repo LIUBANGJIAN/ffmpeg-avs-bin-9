@@ -54,9 +54,9 @@ davs2 的位深是**编译期**固定的，`build/linux/configure` 甚至把 `--
 
 真正的问题是：**这套补丁能不能跨过 6.1 → 9.0 的四年 API 演化。**
 
-答案是可以，而且不需要改一行封装代码。原因在于 `patches/libuavs3e.c` 本来就写的是
-6.1 之后的「新式」写法（`.p.*` 字段、`FF_CODEC_ENCODE_CB`、`codec_internal.h`），
-9.0 里这些 API 一个都没删：
+答案基本可以：**只需要改一处**。`patches/libuavs3e.c` 本来就写的是 6.1 之后的
+「新式」写法（`.p.*` 字段、`FF_CODEC_ENCODE_CB`、`codec_internal.h`），这些 API 9.0 全都还在，
+只有像素格式声明这一项被搬了家（见下表最后一行）：
 
 | 依赖的 API | 9.0.2 现状 | 位置 |
 |---|---|---|
@@ -64,9 +64,10 @@ davs2 的位深是**编译期**固定的，`build/linux/configure` 甚至把 `--
 | `FF_CODEC_ENCODE_CB` | 在 | `libavcodec/codec_internal.h:376` |
 | `CODEC_LONG_NAME` | 在 | `libavcodec/codec_internal.h:347` |
 | `FFCodecDefault` | 在 | `libavcodec/codec_internal.h:97` |
-| `.p.capabilities` / `.p.pix_fmts` / `.p.priv_class` | 在（`AVCodec` 已全部 `.p.*` 化） | `libavcodec/codec.h` |
+| `.p.capabilities` / `.p.priv_class` | 在（`AVCodec` 已全部 `.p.*` 化） | `libavcodec/codec.h` |
 | `avctx->coded_width/height` | 在 | `libavcodec/avcodec.h:619` |
 | `FF_API_CODED_FRAME` | **已删除** | 封装里那圈 `#if` 会自然跳空，不是错误 |
+| `AVCodec.pix_fmts` | **已移除**（搬到 `FFCodec` 的匿名 union） | 必须改用 `CODEC_PIXFMTS()` 宏 |
 
 `libdavs2.c` / `libuavs3d.c` 这边同样没动：`davs2_decode_frame` 仍是
 `FF_CODEC_DECODE_CB` 三参回调，`libuavs3d.c` 里那段
@@ -138,6 +139,30 @@ davs2 的位深是**编译期**固定的，`build/linux/configure` 甚至把 `--
 | Android armv7 | ubuntu + **NDK r25c** | `ffmpeg` | API 19（Android 4.4.2），单文件 |
 | Android arm64 | 同上 | `ffmpeg` | API 21（Android 5.0） |
 
+### 最近一次构建实测（tag `v9.0.2-avs.1`，2026-10-28）
+
+| job | 耗时 | 结果 |
+|---|---|---|
+| windows-x86_64 | 36 min | success |
+| linux-x86_64-static | 22 min | success |
+| android-arm64 | 9 min | success |
+| android-armv7 | 15 min | success |
+| release | <1 min | success（4 个 zip + SHA256SUMS） |
+
+产物下载到本机复验：
+
+| 检查项 | 结果 |
+|---|---|
+| `ffprobe -version` | `ffprobe version 9.0.2` ✔（不是 commit sha，见下方说明） |
+| 4K AVS2 解码 4 秒 | 127 帧，无新增错误 ✔ |
+| AC-3 音轨 | `ac3, 48000 Hz, 5.1` ✔ |
+| 色彩信令 | `bt2020 / arib-std-b67 / bt2020nc` ✔ |
+| AVS3 编码→解码往返 | 编码 40K，解回 25 帧 ✔ |
+| AVS2 编码（xavs2） | 48K，色彩仍 `unknown`（反向对照）✔ |
+| stdout 干净度 | NUT 魔数完整，`libuavs3d` 横幅在 stderr ✔ |
+| linux `ffmpeg`/`ffprobe` | ELF64 x86-64，**无 PT_INTERP / 无 PT_DYNAMIC** = 纯静态 ✔ |
+| SHA256 | 与 release 的 `SHA256SUMS.txt` 逐字节一致 ✔ |
+
 ### 为什么 Linux 必须用 musl
 
 glibc 静态链接后 `getaddrinfo` / NSS 会在**运行时**静默失败（dlopen 不到 `libnss_*`），
@@ -188,22 +213,19 @@ bionic 不能静态链（会丢 TLS/atfork，运行时随机崩，官方不支�
   `com_seqh_t` 补了同名同序的四个字段（不升 1.2，避免其 CMakeLists 的 armv7 分支
   强制 `-mfloat-abi=hard` 打坏 Android softfp 构建）。
 
-**预期**（深圳卫视 4K 组播，AVS2 Main10，3840x2160 yuv420p10le）：
+**实测**（深圳卫视 4K 组播，AVS2 Main10，3840x2160 yuv420p10le，9.0.2 产物）：
 
 ```
-$ ffprobe -show_streams 录制.ts
+$ ffprobe -select_streams v:0 -show_entries stream=color_primaries,color_transfer,color_space \
+           -of default=nw=1 录制.ts
 
-原始 FFmpeg（未打色彩补丁）    本仓库构建
-color_primaries=unknown  ->  color_primaries=bt2020
-color_transfer =unknown  ->  color_transfer =arib-std-b67
-color_space    =unknown  ->  color_space    =bt2020nc
+color_primaries=bt2020
+color_transfer=arib-std-b67
+color_space=bt2020nc
 ```
 
-即 **BT.2020 + HLG**。未打补丁时这三个值全是 `unknown`，播放器只能按 BT.709/SDR 解释，
-画面会偏淡偏灰。
-
-> 上表在 6.1.6 仓库（`ffmpeg-avs-bin`）上已实测成立；本仓库（9.0.2）的补丁与它同源，
-> 等 CI 产物下载后会用同一份样本复测。**若 9.0.2 上结果不同，会在这里如实记录。**
+即 **BT.2020 + HLG**。未打补丁的 FFmpeg 对这条流这三个值全是 `unknown`，播放器只能按
+BT.709/SDR 解释，画面会偏淡偏灰。
 
 反向对照（说明补丁**不会凭空造色彩**）：用本仓库的 `xavs2` 自编一个 AVS2 流，它不带
 序列显示扩展，`ffprobe` 报的仍然是三个 `unknown` —— 只有码流里真的有
@@ -362,6 +384,7 @@ PATH、`$TSDuck_HOME`、常见安装目录，也可以用 `--tsp` 指定。
 | 6 | aom 官方源在国内常不可达 | 可选库，默认关闭，不影响 AVS |
 | 7 | AVS3 色彩透出没有真实广播流可验 | 代码路径与 FFmpeg 自带 AVS3 解码器一致，只验证了「不破坏原有编解码」 |
 | 8 | `color_range` 不映射 `sample_range` | 实测流该位为 0（limited），FFmpeg 默认也按 limited 处理，硬映射反而可能偏色 |
+| 9 | 版本串靠写 `VERSION` 文件压住 | GitHub 的 tag tarball 无 `.git`，`ffbuild/version.sh` 的 `git describe` 会向上命中本仓库 `.git`，产物版本串变成 commit sha（实测 `f052ad4`）。构建脚本在 configure 前写 `VERSION` 修正 |
 
 ---
 
