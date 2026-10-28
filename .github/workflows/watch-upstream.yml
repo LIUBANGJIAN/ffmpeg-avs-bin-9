@@ -1,0 +1,170 @@
+name: watch-upstream
+
+# ==============================================================================
+# 上游巡检 —— 每周看一眼 FFmpeg 有没有发新版本
+#
+# 三步：
+#   1) 检测  当前锁定的 9.0.2 与上游最新比（双源交叉，见 scripts/watch-upstream.py）
+#   2) 验证  有新版本时，在源码临时副本上跑 local-verify-patch.sh 核对 10 项锚点
+#   3) 上报  锚点全绿 -> 自动开 PR 改版本号；锚点失配 / 新 major -> 开 issue
+#
+# 边界（重要）：
+#   - 不会自动合并、不会自动推 main。GITHUB_TOKEN 推的提交不会触发 build.yml，
+#     想真出产物必须由人 merge 这个 PR，merge 动作才会正常触发四平台构建。
+#   - 同一版本只报一次。issue/PR 标题里带版本号，重跑靠标题去重，不会刷屏。
+#
+# 前置条件（一次性，不改也能跑，但只能开 issue）：
+#   仓库 Settings → Actions → General → Workflow permissions
+#   勾选「Allow GitHub Actions to create and approve pull requests」
+# ==============================================================================
+
+on:
+  schedule:
+    # 每周一 03:17 UTC = 北京时间 11:17。
+    # 故意避开整点：GitHub 的 cron 在 :00 排队最严重，经常延迟十几分钟。
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '手动指定要验证的版本（如 9.0.3）；留空则自动检测上游最新'
+        required: false
+        default: ''
+
+permissions:
+  contents: write          # 建分支、推 commit
+  pull-requests: write     # 开 PR
+  issues: write            # 开 issue
+
+# 与 build.yml 的 group 不同，两边不会互相取消
+concurrency:
+  group: watch-upstream
+  cancel-in-progress: false
+
+jobs:
+  # ============================================================================
+  # 1) 检测
+  # ============================================================================
+  detect:
+    name: 检测上游
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      current: ${{ steps.d.outputs.current }}
+      latest: ${{ steps.d.outputs.latest }}
+      has_update: ${{ steps.d.outputs.has_update }}
+      kind: ${{ steps.d.outputs.kind }}
+      needs_manual: ${{ steps.d.outputs.needs_manual }}
+      note: ${{ steps.d.outputs.note }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 读取当前锁定版本
+        id: cur
+        run: |
+          set -uo pipefail
+          CUR=$(bash -c 'set -a; . ./scripts/env.sh; printf "%s" "$FFMPEG_VERSION"' 2>/dev/null || true)
+          if [ -z "$CUR" ]; then
+            echo "::error::从 scripts/env.sh 读不到 FFMPEG_VERSION"
+            exit 1
+          fi
+          echo "version=$CUR" >>"$GITHUB_OUTPUT"
+          echo "当前锁定：$CUR"
+
+      - name: 对比上游
+        id: d
+        env:
+          # 未认证的 api.github.com 只有 60 次/小时；runner 上这个 token 现成，带上
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WANT: ${{ inputs.version }}
+        run: |
+          set -uo pipefail
+          ARGS=(--current "${{ steps.cur.outputs.version }}")
+          if [ -n "${WANT:-}" ]; then
+            ARGS+=(--want "$WANT")
+          fi
+          python3 scripts/watch-upstream.py "${ARGS[@]}"
+
+      - name: 写摘要
+        if: always() && steps.d.outputs.current != ''
+        run: |
+          set -uo pipefail
+          LATEST="${{ steps.d.outputs.latest }}"
+          KIND="${{ steps.d.outputs.kind }}"
+          {
+            echo "### 上游巡检"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| 当前锁定 | \`${{ steps.d.outputs.current }}\` |"
+            if [ -n "$LATEST" ]; then
+              echo "| 上游最新 | \`$LATEST\`（$KIND） |"
+            else
+              echo "| 上游最新 | 无更新 |"
+            fi
+            NOTE="${{ steps.d.outputs.note }}"
+            if [ -n "$NOTE" ]; then
+              echo "| 备注 | $NOTE |"
+            fi
+            echo ""
+          } >>"$GITHUB_STEP_SUMMARY"
+
+  # ============================================================================
+  # 2) 锚点验证 —— 只在真检出更新时跑
+  # ============================================================================
+  verify:
+    name: 锚点验证 ${{ needs.detect.outputs.latest }}
+    needs: detect
+    if: needs.detect.outputs.has_update == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 在源码临时副本上验锚点
+        run: |
+          set -o pipefail
+          # 环境变量优先于 env.sh 里的默认值，所以不用改文件就能验新版本。
+          # 用 bash 显式调用而不是 ./：local-verify-patch.sh 在 git 里是 644，
+          # 直接 ./ 执行会 Permission denied（这个仓库的脚本都是这么调的）。
+          FFMPEG_VERSION="${{ needs.detect.outputs.latest }}" \
+            bash scripts/local-verify-patch.sh 2>&1 | tee verify.log
+
+      - name: 上传验证日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-log
+          path: verify.log
+          retention-days: 14
+          if-no-files-found: ignore
+
+  # ============================================================================
+  # 3) 上报 —— 无论 verify 成功还是失败都要跑
+  # ============================================================================
+  report:
+    name: 上报结果
+    needs: [detect, verify]
+    if: always() && needs.detect.outputs.has_update == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 取回验证日志
+        if: needs.verify.result != 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: verify-log
+        continue-on-error: true
+
+      - name: 决定开 PR 还是开 issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CUR: ${{ needs.detect.outputs.current }}
+          VER: ${{ needs.detect.outputs.latest }}
+          KIND: ${{ needs.detect.outputs.kind }}
+          MANUAL: ${{ needs.detect.outputs.needs_manual }}
+          VRESULT: ${{ needs.verify.result }}
+        run: |
+          set -uo pipefail
+          bash scripts/watch-report.sh

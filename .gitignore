@@ -1,6 +1,13 @@
 # 构建工作目录（下载的源码、中间产物、安装前缀、日志）
 /work/
 
+# 本地验证留下的日志（local-verify-patch.sh / watch-upstream 都会写）
+/verify.log
+
+# Python 字节码
+__pycache__/
+*.pyc
+
 # 产物
 *.zip
 *.7z
