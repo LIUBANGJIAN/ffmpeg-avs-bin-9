@@ -198,15 +198,68 @@ cat >pr-body.md <<EOF
 EOF
 
 ERRLOG=$(mktemp)
-if {
-  bump_version &&
-  git add scripts/env.sh &&
-  git commit -q -m "chore: 追平 FFmpeg ${VER}（锚点已验证，待 CI 实编）" &&
-  git push -q -f -u origin "$BRANCH" &&
-  gh pr create --base main --head "$BRANCH" \
-    --title "chore: 追平 FFmpeg ${VER}" \
-    --body-file pr-body.md
-} >"$ERRLOG" 2>&1; then
+
+# 1) 改版本号
+if ! bump_version >"$ERRLOG" 2>&1; then
+  log "改版本号失败"
+  {
+    printf '巡检发现 **FFmpeg %s**（当前锁定 **%s**），锚点验证全绿，\n' "$VER" "$CUR"
+    printf '但**改版本号时锚点失配** —— `scripts/env.sh` 里那一行的写法变了。\n\n'
+    printf '### 输出\n\n```\n'
+    tail -20 "$ERRLOG" 2>/dev/null || printf '（无输出）\n'
+    printf '```\n\n### 手改（就一行）\n\n```diff\n'
+    printf -- '--- a/scripts/env.sh\n+++ b/scripts/env.sh\n'
+    printf -- '-FFMPEG_VERSION="${FFMPEG_VERSION:-%s}"\n' "$CUR"
+    printf -- '+FFMPEG_VERSION="${FFMPEG_VERSION:-%s}"\n' "$VER"
+    printf '```\n'
+    footer
+  } >issue-body.md
+  gh issue create --title "[上游巡检] FFmpeg ${VER} 可升级，但改版本号失败" \
+    --body-file issue-body.md
+  summary "### 需要人工：\`$VER\` 改版本号失败"
+  rm -f "$ERRLOG"
+  exit 0
+fi
+
+# 2) 提交
+git add scripts/env.sh
+if ! git commit -q -m "chore: 追平 FFmpeg ${VER}（锚点已验证，待 CI 实编）" >>"$ERRLOG" 2>&1; then
+  log "commit 失败"
+  {
+    printf '巡检发现 **FFmpeg %s**（当前锁定 **%s**），锚点全绿，但本地提交失败。\n\n' "$VER" "$CUR"
+    printf '### 输出\n\n```\n'
+    tail -20 "$ERRLOG" 2>/dev/null || printf '（无输出）\n'
+    printf '```\n'
+    footer
+  } >issue-body.md
+  gh issue create --title "[上游巡检] FFmpeg ${VER} 可升级，但提交失败" \
+    --body-file issue-body.md
+  summary "### 需要人工：\`$VER\` 提交失败"
+  rm -f "$ERRLOG"
+  exit 0
+fi
+
+# 3) 推分支 —— 单独判，因为「推成功但建 PR 被拒」和「推就失败」是两回事，
+#    前者其实已经完成 99%，只需要人点一下
+PUSH_OK=0
+if git push -q -f -u origin "$BRANCH" >>"$ERRLOG" 2>&1; then
+  PUSH_OK=1
+  log "分支已推送：$BRANCH"
+else
+  log "分支推送失败"
+fi
+
+# 4) 开 PR
+PR_OK=0
+if [ "$PUSH_OK" = "1" ]; then
+  if gh pr create --base main --head "$BRANCH" \
+      --title "chore: 追平 FFmpeg ${VER}" \
+      --body-file pr-body.md >>"$ERRLOG" 2>&1; then
+    PR_OK=1
+  fi
+fi
+
+if [ "$PR_OK" = "1" ]; then
   log "PR 已创建：$BRANCH"
   summary "### 已自动开 PR：\`$VER\`（锚点全绿）"
   rm -f "$ERRLOG"
@@ -214,31 +267,51 @@ if {
 fi
 
 # ------------------------------------------------------------------------------
-# 情况四：PR 开不起来（多半是仓库没开「允许 Actions 创建 PR」）—— 降级 issue
+# 情况四：分支推好了，但 PR 建不起来 —— 给一键链接，人只差一次点击
 # ------------------------------------------------------------------------------
-log "开 PR 失败，降级为 issue"
-{
-  printf '巡检发现 **FFmpeg %s**（当前锁定 **%s**），锚点验证全绿，\n' "$VER" "$CUR"
-  printf '但**自动开 PR 失败了**。\n\n'
-  printf '### 失败输出\n\n```\n'
-  tail -20 "$ERRLOG" 2>/dev/null || printf '（无输出）\n'
-  printf '```\n\n'
-  printf '最常见的原因是仓库没允许 Actions 创建 PR：\n\n'
-  printf '> Settings → Actions → General → Workflow permissions → 勾选\n'
-  printf '> **Allow GitHub Actions to create and approve pull requests**\n\n'
-  printf '### 也可以手改（就一行）\n\n```diff\n'
-  printf -- '--- a/scripts/env.sh\n'
-  printf -- '+++ b/scripts/env.sh\n'
-  printf -- '-FFMPEG_VERSION="${FFMPEG_VERSION:-%s}"\n' "$CUR"
-  printf -- '+FFMPEG_VERSION="${FFMPEG_VERSION:-%s}"\n' "$VER"
-  printf '```\n'
-  printf '\n改完推 main 就会触发四平台构建（\`build.yml\` 从 env.sh 读版本）。\n'
-  footer
-} >issue-body.md
+PRURL="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-}/pull/new/${BRANCH}"
 
-gh issue create \
-  --title "[上游巡检] FFmpeg ${VER} 可升级，但自动开 PR 被拒" \
-  --body-file issue-body.md
-summary "### 需要人工：\`$VER\` 可升级但 PR 创建失败"
+if [ "$PUSH_OK" = "1" ]; then
+  log "分支已就绪，只差建 PR（仓库没开 Actions 创建 PR 的开关）"
+  {
+    printf '巡检发现 **FFmpeg %s**（当前锁定 **%s**），锚点验证全绿，\n' "$VER" "$CUR"
+    printf '分支 `%s` **已经推好了**，只差一个 PR。\n\n' "$BRANCH"
+    printf '### 点这里创建 PR\n\n'
+    printf '**<%s>**\n\n' "$PRURL"
+    printf '点进去 Create pull request → Merge 即可。merge 到 main 会自动触发四平台构建。\n\n'
+    printf '### 为什么没自动开\n\n'
+    printf '仓库没允许 Actions 创建 PR。`GET /actions/permissions/workflow` 当前返回\n'
+    printf '`can_approve_pull_request_reviews: false`。这个开关 `permissions:` 里声明不了，只能改仓库设置：\n\n'
+    printf '> Settings → Actions → General → Workflow permissions → 勾选\n'
+    printf '> **Allow GitHub Actions to create and approve pull requests**\n\n'
+    printf '勾上之后每周巡检就能全自动，不用再点这里了。\n\n'
+    printf '### 失败输出\n\n```\n'
+    tail -15 "$ERRLOG" 2>/dev/null || printf '（无输出）\n'
+    printf '```\n'
+    footer
+  } >issue-body.md
+  gh issue create --title "[上游巡检] FFmpeg ${VER} 分支已就绪，点一下开 PR" \
+    --body-file issue-body.md
+  summary "### 分支已推送：\`$BRANCH\`（需点一下开 PR）"
+else
+  log "分支推送失败"
+  {
+    printf '巡检发现 **FFmpeg %s**（当前锁定 **%s**），锚点验证全绿，\n' "$VER" "$CUR"
+    printf '但**分支推送失败**了，仓库里什么都没改。\n\n'
+    printf '### 失败输出\n\n```\n'
+    tail -20 "$ERRLOG" 2>/dev/null || printf '（无输出）\n'
+    printf '```\n\n'
+    printf '### 手改（就一行）\n\n```diff\n'
+    printf -- '--- a/scripts/env.sh\n+++ b/scripts/env.sh\n'
+    printf -- '-FFMPEG_VERSION="${FFMPEG_VERSION:-%s}"\n' "$CUR"
+    printf -- '+FFMPEG_VERSION="${FFMPEG_VERSION:-%s}"\n' "$VER"
+    printf '```\n'
+    footer
+  } >issue-body.md
+  gh issue create --title "[上游巡检] FFmpeg ${VER} 可升级，但分支推送失败" \
+    --body-file issue-body.md
+  summary "### 需要人工：\`$VER\` 分支推送失败"
+fi
+
 rm -f "$ERRLOG"
 exit 0
