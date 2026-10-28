@@ -17,7 +17,7 @@ concurrency:
 env:
   # 版本只在这里出现一次？不 —— 唯一权威是 scripts/env.sh，
   # 这里只是给日志看的。真正锁版本的地方是 env.sh 里的 FFMPEG_VERSION。
-  FFMPEG_VERSION: 9.0.2
+  FFMPEG_VERSION: 9.0.1
 
 jobs:
   # ==========================================================================

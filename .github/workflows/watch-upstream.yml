@@ -112,7 +112,9 @@ jobs:
   # 2) 锚点验证 —— 只在真检出更新时跑
   # ============================================================================
   verify:
-    name: 锚点验证 ${{ needs.detect.outputs.latest }}
+    # 这里不能用 ${{ needs.detect.outputs.latest }}：job 显示名在排队阶段就要算出来，
+    # 那时 needs 还没有 outputs，会原样打出未展开的表达式。版本号在 step 里打。
+    name: 锚点验证
     needs: detect
     if: needs.detect.outputs.has_update == 'true'
     runs-on: ubuntu-latest
@@ -123,6 +125,7 @@ jobs:
       - name: 在源码临时副本上验锚点
         run: |
           set -o pipefail
+          echo "待验证版本：${{ needs.detect.outputs.latest }}（当前锁定 ${{ needs.detect.outputs.current }}）"
           # 环境变量优先于 env.sh 里的默认值，所以不用改文件就能验新版本。
           # 用 bash 显式调用而不是 ./：local-verify-patch.sh 在 git 里是 644，
           # 直接 ./ 执行会 Permission denied（这个仓库的脚本都是这么调的）。

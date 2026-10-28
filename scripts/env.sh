@@ -31,7 +31,7 @@
 #
 # 已知未验证：9.0 对 xavs2 / xavs 两个老封装没有改动，但它们依赖的 API 在 8.0
 # 之后是否有语义变化，只能靠 CI 实编来证。
-FFMPEG_VERSION="${FFMPEG_VERSION:-9.0.2}"
+FFMPEG_VERSION="${FFMPEG_VERSION:-9.0.1}"
 FFMPEG_TAG="n${FFMPEG_VERSION}"
 FFMPEG_URL="https://github.com/FFmpeg/FFmpeg/archive/refs/tags/${FFMPEG_TAG}.tar.gz"
 
