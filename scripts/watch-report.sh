@@ -149,13 +149,15 @@ bump_version() {
 import re, sys, pathlib
 
 ver = sys.argv[1]
+# 只改 env.sh —— 版本号现在是单一来源。
+# 刻意不碰 .github/workflows/*：GITHUB_TOKEN 没有 workflows 权限，
+# 带 workflow 改动的 push 会被服务端直接拒绝，实测原文：
+#   refusing to allow a GitHub App to create or update workflow
+#   `.github/workflows/build.yml` without `workflows` permission
 rules = [
     ("scripts/env.sh",
      r'^FFMPEG_VERSION="\$\{FFMPEG_VERSION:-[^}]*\}"$',
      'FFMPEG_VERSION="${FFMPEG_VERSION:-%s}"' % ver),
-    (".github/workflows/build.yml",
-     r'^  FFMPEG_VERSION: [0-9][0-9.]*$',
-     '  FFMPEG_VERSION: %s' % ver),
 ]
 for path, pat, rep in rules:
     p = pathlib.Path(path)
@@ -180,7 +182,8 @@ cat >pr-body.md <<EOF
 ### 已经验证过的
 
 - \`scripts/local-verify-patch.sh\` 在 ${VER} 源码的临时副本上跑通，10 项锚点全部命中（\`ALL_ANCHORS_OK\`）
-- 改动只有两处版本号：\`scripts/env.sh\` 的 \`FFMPEG_VERSION\`、\`.github/workflows/build.yml\` 里给日志看的同名变量
+- 改动只有一处：\`scripts/env.sh\` 的 \`FFMPEG_VERSION\`。版本号现在是单一来源，
+  \`build.yml\` 里已不含任何版本字面量（linux job 现场从 env.sh 读）
 
 ### 没有验证过的
 
@@ -197,7 +200,7 @@ EOF
 ERRLOG=$(mktemp)
 if {
   bump_version &&
-  git add scripts/env.sh .github/workflows/build.yml &&
+  git add scripts/env.sh &&
   git commit -q -m "chore: 追平 FFmpeg ${VER}（锚点已验证，待 CI 实编）" &&
   git push -q -f -u origin "$BRANCH" &&
   gh pr create --base main --head "$BRANCH" \
@@ -223,16 +226,13 @@ log "开 PR 失败，降级为 issue"
   printf '最常见的原因是仓库没允许 Actions 创建 PR：\n\n'
   printf '> Settings → Actions → General → Workflow permissions → 勾选\n'
   printf '> **Allow GitHub Actions to create and approve pull requests**\n\n'
-  printf '### 也可以手改（就两行）\n\n```diff\n'
+  printf '### 也可以手改（就一行）\n\n```diff\n'
   printf -- '--- a/scripts/env.sh\n'
   printf -- '+++ b/scripts/env.sh\n'
   printf -- '-FFMPEG_VERSION="${FFMPEG_VERSION:-%s}"\n' "$CUR"
   printf -- '+FFMPEG_VERSION="${FFMPEG_VERSION:-%s}"\n' "$VER"
-  printf -- '--- a/.github/workflows/build.yml\n'
-  printf -- '+++ b/.github/workflows/build.yml\n'
-  printf -- '-  FFMPEG_VERSION: %s\n' "$CUR"
-  printf -- '+  FFMPEG_VERSION: %s\n' "$VER"
   printf '```\n'
+  printf '\n改完推 main 就会触发四平台构建（\`build.yml\` 从 env.sh 读版本）。\n'
   footer
 } >issue-body.md
 

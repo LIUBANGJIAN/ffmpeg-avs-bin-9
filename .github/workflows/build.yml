@@ -14,10 +14,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  # 版本只在这里出现一次？不 —— 唯一权威是 scripts/env.sh，
-  # 这里只是给日志看的。真正锁版本的地方是 env.sh 里的 FFMPEG_VERSION。
-  FFMPEG_VERSION: 9.0.1
+# 版本号的唯一权威是 scripts/env.sh —— 本文件里刻意不留任何版本字面量。
+#
+# 以前这里写着 FFMPEG_VERSION: 9.0.x，后果有两个：
+#   1) 升级要改两处，两边不一致时 linux 会按旧版本编（容器是靠 -e 传进去的），
+#      而 windows / android 直接读 env.sh —— 同一次构建能出两套版本
+#   2) GITHUB_TOKEN 没有 workflows 权限，巡检改本文件会被服务端拒绝
+#      （refusing to allow a GitHub App to create or update workflow）
+# 现在改由需要的 job 现场从 env.sh 读，见 linux job 的「解析 FFmpeg 版本」。
 
 jobs:
   # ==========================================================================
@@ -117,11 +121,23 @@ jobs:
           key: dl-linux-${{ hashFiles('scripts/env.sh') }}
           restore-keys: dl-linux-
 
+      - name: 解析 FFmpeg 版本
+        id: ver
+        run: |
+          set -uo pipefail
+          V=$(bash -c '. ./scripts/env.sh; printf "%s" "$FFMPEG_VERSION"')
+          if [ -z "$V" ]; then
+            echo "::error::从 scripts/env.sh 读不到 FFMPEG_VERSION"
+            exit 1
+          fi
+          echo "本次构建 FFmpeg $V"
+          echo "v=$V" >>"$GITHUB_OUTPUT"
+
       - name: 在 Alpine 容器里构建
         run: |
           docker run --rm \
             -v "$PWD:/src" -w /src \
-            -e FFMPEG_VERSION="$FFMPEG_VERSION" \
+            -e FFMPEG_VERSION="${{ steps.ver.outputs.v }}" \
             alpine:3.20 sh -c '
               set -e
               # diffutils 必须显式装：Alpine 自带的 diff 是 BusyBox 版，
