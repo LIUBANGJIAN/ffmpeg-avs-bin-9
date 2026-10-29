@@ -98,6 +98,18 @@ DEPS=(
   # 这个 tarball 自带 configure，正好省掉 autoreconf
   "fontconfig|tar|https://www.freedesktop.org/software/fontconfig/release/fontconfig-2.14.2.tar.xz|"
 
+  # cairo：唯一用途是 FFmpeg 的 drawvg 滤镜（drawvg_filter_deps="cairo"）。
+  # 走 cairographics 官方发行目录 —— freedesktop 的 GitLab 没有 GitHub release 资产，
+  # download.gnome.org 上也没有 cairo。
+  # 只需要 pixman 一个传递依赖，见下面那条（显式装，不走 meson wrap）。
+  # 其余后端全部显式关掉，避免拖进 glib/gtk/fontconfig 一整条 GNOME 链。
+  # pixman：cairo 的必需依赖（cairo 要求 >= 0.42.3）。
+  # 为什么不依赖 cairo 自带的 meson subproject wrap：那会在 build 时联网拉
+  # pixman-0.44.2.tar.gz（wrap 里写死了版本和 hash），CI 上多一个网络单点，
+  # 而且版本被锁在旧版。这里显式装 0.46.4 到 prefix，meson 会优先用已安装的。
+  "pixman|tar|https://cairographics.org/releases/pixman-0.46.4.tar.xz|"
+  "cairo|tar|https://cairographics.org/releases/cairo-1.18.6.tar.xz|"
+
   # ========== Windows 专属 ==========
   # 硬件编码器头文件：只要头文件，不需要 CUDA / 运行库
   "nvcodec|tar|https://github.com/FFmpeg/nv-codec-headers/archive/refs/tags/n12.2.72.0.tar.gz|"

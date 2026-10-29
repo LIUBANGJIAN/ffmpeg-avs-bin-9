@@ -49,6 +49,13 @@ build_everything() {
   build_zimg
   build_srt
   build_sdl2
+  # drawvg 滤镜依赖 cairo（cairo 依赖 pixman）
+  build_pixman
+  build_cairo
+  # 硬件编解码（仅 Windows：dep_needed 会按 TARGET_OS 过滤掉其余平台）
+  build_nvcodec
+  build_libvpl
+  build_amf
 
   # 6) 本体
   build_ffmpeg

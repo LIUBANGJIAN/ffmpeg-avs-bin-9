@@ -312,6 +312,133 @@ build_sdl2() {
 }
 
 # ------------------------------------------------------------------------------
+# pixman + cairo —— 唯一目的是开出 FFmpeg 的 drawvg 滤镜
+#
+# configure 里就一行：drawvg_filter_deps="cairo"，检测走 require_pkg_config cairo。
+# 所以只要有 cairo.pc 就行，不关心后端。
+#
+# 关掉全部可选后端（xlib/xcb/glib/freetype/fontconfig/png/zlib/quartz/dwrite），
+# 原因：
+#   - 我们只用 cairo 画 SVG，image surface 足够，不需要任何 windowing 后端
+#   - glib 会拖进 pkg-config + libffi 一整条链；freetype/fontconfig 我们虽然
+#     编了但那套是给 libass 用的，跟 drawvg 无关，交叉编译时反而容易连错
+#   - spectre 默认开，它需要 pixman 的私有结构，关掉更稳
+# ------------------------------------------------------------------------------
+build_pixman() {
+  dep_needed pixman || return 0
+  local dir; dir="$(fetch pixman)"
+
+  meson_build "$dir" pixman \
+    -Dtests=disabled \
+    -Ddemos=disabled \
+    -Dgtk=disabled \
+    -Dlibpng=disabled \
+    -Dopenmp=disabled \
+    -Dgnuplot=disabled
+
+  require_pc pixman-1
+}
+
+build_cairo() {
+  dep_needed cairo || return 0
+  local dir; dir="$(fetch cairo)"
+
+  # cairo 1.18.6 的 meson.build 写死 meson_version: '>= 1.3.0'，
+  # 而且用的是新版 `meson.options` 文件名（旧版 meson 只认 meson_options.txt，
+  # 会把所有选项当成未知选项直接报错）。这里提前拦，比让 ninja 跑到一半再炸省事。
+  local mv lowest
+  mv="$(meson --version 2>/dev/null || echo 0)"
+  # sort -V 升序取第一个 = 两者中较小的那个。若较小的不是 1.3.0，说明 mv < 1.3.0。
+  # （不能直接用 sort -V -C 的退出码：那是判断"是否已有序"，方向容易搞反。）
+  lowest=$(printf '%s\n' "$mv" 1.3.0 | sort -V | head -1)
+  if [ "$lowest" != "1.3.0" ]; then
+    die "cairo 1.18.6 需要 meson >= 1.3.0，当前是 $mv"
+  fi
+  ok "meson $mv 满足 cairo 的要求"
+
+  # pixman 必须已经在 prefix 里，否则 meson 会退回 subproject wrap 联网拉取
+  require_pc pixman-1
+
+  meson_build "$dir" cairo \
+    -Dxlib=disabled \
+    -Dxcb=disabled \
+    -Dxlib-xcb=disabled \
+    -Dglib=disabled \
+    -Dfreetype=disabled \
+    -Dfontconfig=disabled \
+    -Dpng=disabled \
+    -Dzlib=disabled \
+    -Dquartz=disabled \
+    -Ddwrite=disabled \
+    -Dgtk2-utils=disabled \
+    -Dgtk_doc=false \
+    -Dtests=disabled \
+    -Dlzo=disabled \
+    -Dtee=disabled \
+    -Dspectre=false \
+    -Dsymbol-lookup=false
+
+  require_pc cairo
+}
+
+# ------------------------------------------------------------------------------
+# 硬件编解码头文件 / 库（Windows 专属）
+#
+# 这三个曾经只在 env.sh 的 DEPS 里登记，**没有对应的 build 函数**，
+# 于是从来没有被安装过；build-ffmpeg.sh 里的 _have_pc 探测必然失败，
+# 一路 WARN 跳过，构建照样全绿 —— 结果是产物里 nvenc / qsv / amf 一个都没有。
+# 属于安静型故障：CI 不红，但功能缺失。下面补齐。
+#
+# 分工要分清：
+#   nvcodec (ffnvcodec)  只有头文件，没有 .a。它给 nvenc/nvdec/cuvid 提供 ABI 声明，
+#                        真正的实现在 NVIDIA 驱动里，运行时动态加载 ⇒ 静态链接照样能用。
+#   libvpl               Intel oneVPL，有静态库 + .pc。
+#   amf                  AMD，无 .pc、无库，只装头文件目录 AMF/。
+# ------------------------------------------------------------------------------
+build_nvcodec() {
+  dep_needed nvcodec || return 0
+  local dir; dir="$(fetch nvcodec)"
+  local logf="$LOGS/nvcodec.log"
+  CURRENT_LOGFILE="$logf"
+
+  # 它没有任何编译单元，install 只是拷头文件 + 由 ffnvcodec.pc.in 生成 .pc。
+  # 用 PREFIX 而不是 DESTDIR 覆盖：Makefile 里是 `PREFIX ?= /usr/local`。
+  make -C "$dir" install "PREFIX=$PREFIX" > "$logf" 2>&1 \
+    || { dump_log "$logf"; die "nvcodec: make install 失败"; }
+
+  require_pc ffnvcodec
+}
+
+build_libvpl() {
+  dep_needed libvpl || return 0
+  local dir; dir="$(fetch libvpl)"
+
+  # 只要 dispatcher 那个静态库，不要 examples / tools / 测试
+  cmake_build "$dir" libvpl \
+    -DCMAKE_INSTALL_LIBDIR=lib \
+    -DBUILD_EXAMPLES=OFF \
+    -DBUILD_TOOLS=OFF \
+    -DBUILD_TESTS=OFF
+
+  require_pc libvpl
+}
+
+build_amf() {
+  dep_needed amf || return 0
+  local dir; dir="$(fetch amf)"
+
+  # AMF 只有头文件，没有 .pc。FFmpeg configure 的检测写死了
+  #   test_cc ... -I$prefix/include/AMF
+  # 所以必须装到 $PREFIX/include/AMF/ 这一层，不能多一层也不能少一层。
+  [ -d "$dir/amf/public/include" ] \
+    || die "amf: 找不到 amf/public/include（上游目录结构变了）"
+
+  mkdir -p "$PREFIX/include"
+  cp -rf "$dir/amf/public/include" "$PREFIX/include/AMF"
+  ok "安装 include/AMF（$(ls "$PREFIX/include/AMF" | wc -l) 个头文件）"
+}
+
+# ------------------------------------------------------------------------------
 build_misc_all() {
   build_zlib
   build_openssl
@@ -324,4 +451,10 @@ build_misc_all() {
   build_zimg
   build_srt
   build_sdl2
+  build_pixman
+  build_cairo
+  # 硬件编解码（Windows 专属，dep_needed 内部按 TARGET_OS 过滤）
+  build_nvcodec
+  build_libvpl
+  build_amf
 }
