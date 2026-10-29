@@ -387,34 +387,26 @@ build_cairo() {
   require_pc pixman-1
 
   # Windows：cairo 无条件编 win32 后端（meson.build 里是
-  #   `if host_machine.system() == 'windows'`，没有开关能关掉），
-  # 而 cairo-win32-system.c 用了 Windows 8+ 的 COM API CoIncrementMTAUsage，
-  # 它依赖 objbase.h 里的 CO_MTA_USAGE_COOKIE。MinGW 的 objbase.h 没这个 typedef，
-  # 实测报错：
-  #   error: unknown type name 'CO_MTA_USAGE_COOKIE'
-  #   error: unknown type name 'pCoIncrementMTAUsage_t'
+  #   `if host_machine.system() == 'windows'`，没有开关能关掉）。
   #
-  # 它只是个不透明句柄，语义上等价于 PVOID，补一个 typedef 即可。
-  # 用 edit_exact 而不是 patch(1)：锚点必须精确匹配 1 次，上游改了会立刻报错，
-  # 不会出现"看起来打了其实没打"的半残产物。
-  if [ "${TARGET_OS:-}" = "windows" ]; then
-    local sysc="$dir/src/win32/cairo-win32-system.c"
-    [ -f "$sysc" ] || die "cairo: 找不到 src/win32/cairo-win32-system.c"
-    edit_exact "$sysc" \
-'#include <stdbool.h>
-
-typedef HRESULT (__stdcall *pCoIncrementMTAUsage_t) (CO_MTA_USAGE_COOKIE*);' \
-'#include <stdbool.h>
-
-/* MinGW 的 objbase.h 没有 CO_MTA_USAGE_COOKIE（Windows 8+ 的 COM API）。
- * 它只是个不透明句柄，语义等价于 PVOID，补上即可。
- * 只在 MinGW 下补：MSVC 的 SDK 头文件里本来就有，重复定义会冲突。 */
-#if defined(__MINGW32__) && !defined(CO_MTA_USAGE_COOKIE)
-typedef PVOID CO_MTA_USAGE_COOKIE;
-#endif
-
-typedef HRESULT (__stdcall *pCoIncrementMTAUsage_t) (CO_MTA_USAGE_COOKIE*);'
-  fi
+  # 这里**不需要任何补丁**，但必须理解清楚，否则会像下面这样反复踩：
+  #
+  # cairo-win32-system.c 用了 Windows 8+ 的 CoIncrementMTAUsage，
+  # 其参数类型 CO_MTA_USAGE_COOKIE 由 MinGW 的 combaseapi.h 提供，
+  # 但那个 typedef 的可见性取决于 _WIN32_WINNT。
+  # cairo 的 meson.build 里两档：
+  #   dwrite 开 -> -D_WIN32_WINNT=_WIN32_WINNT_WIN10  (0x0A00)
+  #   dwrite 关 -> -D_WIN32_WINNT=_WIN32_WINNT_VISTA  (0x0600)
+  # 关掉 dwrite 时版本低于 Win8，类型不可见 ⇒
+  #   error: unknown type name 'CO_MTA_USAGE_COOKIE'
+  #
+  # 我曾在这里补过一个 `typedef PVOID CO_MTA_USAGE_COOKIE;`，
+  # 结果开启 dwrite 后与 combaseapi.h 的 DECLARE_HANDLE 冲突
+  # （后者是句柄结构体，不是 PVOID）：
+  #   error: conflicting types for 'CO_MTA_USAGE_COOKIE'
+  #
+  # 正解是保持 dwrite=enabled（见下面 meson 参数），让 WINVER 到位，
+  # 而不是自己伪造类型。
 
   # cairo 的选项类型也不统一：只有 gtk_doc 是 boolean，其余都是 feature。
   # （spectre / symbol-lookup 是 feature，写成 false 会让 meson setup 直接报错。）
