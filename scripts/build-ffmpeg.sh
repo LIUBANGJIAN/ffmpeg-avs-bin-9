@@ -242,10 +242,12 @@ build_ffmpeg() {
       die "--enable-nvenc 需要 ffnvcodec，但 pkg-config 找不到它（build_nvcodec 没跑成？）"
     fi
 
-    if _have_pc libvpl; then
+    # pkg-config 名是 vpl（上游产物 vpl.pc），不是 libvpl —— 与 configure 里
+    # check_pkg_config libmfx "vpl >= 2.6" 一致。
+    if _have_pc vpl; then
       FF_ARGS+=(--enable-libvpl)
     else
-      die "--enable-libvpl 需要 libvpl.pc，但 pkg-config 找不到它（build_libvpl 没跑成？）"
+      die "--enable-libvpl 需要 vpl.pc（>= 2.6），但 pkg-config 找不到它（build_libvpl 没跑成？）"
     fi
 
     # AMF 没有 .pc，只能看头文件（configure 的检测写死 -I$prefix/include/AMF）

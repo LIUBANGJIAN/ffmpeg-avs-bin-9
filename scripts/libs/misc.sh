@@ -555,7 +555,10 @@ VPLNEW
     -DBUILD_TOOLS=OFF \
     -DBUILD_TESTS=OFF
 
-  require_pc libvpl
+  # 注意 pkg-config 名是 **vpl** 而不是 libvpl —— 上游 libvpl/pkgconfig/vpl.pc.in
+  # 生成的产物就叫 vpl.pc。这也正好对上 FFmpeg configure 里那句：
+  #   check_pkg_config libmfx "vpl >= 2.6" "mfxvideo.h mfxdispatcher.h" MFXLoad
+  require_pc vpl
 }
 
 build_amf() {
