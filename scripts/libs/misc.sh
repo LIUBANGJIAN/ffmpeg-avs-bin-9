@@ -437,6 +437,52 @@ typedef HRESULT (__stdcall *pCoIncrementMTAUsage_t) (CO_MTA_USAGE_COOKIE*);'
     -Dspectre=disabled \
     -Dsymbol-lookup=disabled
 
+  # Windows 静态库的 dllimport 问题。
+  #
+  # cairo 的 src/meson.build 里有这么一段：
+  #   if get_option('default_library') == 'static' and host_machine.system() == 'windows'
+  #     add_project_arguments('-DCAIRO_WIN32_STATIC_BUILD', language: 'c')
+  #   endif
+  # 这个宏让 cairo 自己的头文件不再给函数加 __declspec(dllimport)，
+  # 静态库里才会是 cairo_create 而不是 __imp_cairo_create。
+  #
+  # 但 add_project_arguments **只作用于编 cairo 自己**，
+  # 而 pkgmod.generate(libcairo, ...) 没有传 extra_cflags，
+  # 所以 cairo.pc 的 Cflags 里没有这个宏 —— 使用方（FFmpeg configure 的
+  # require_pkg_config cairo）拿到的仍是 dllimport 声明，链接时变成：
+  #   undefined reference to `__imp_cairo_create'
+  #
+  # 实测就是这个错，且 Windows 才会犯（非 Windows 无 dllimport 概念）。
+  # 修法：给装好的 cairo.pc 的 Cflags 补上该宏。
+  if [ "${TARGET_OS:-}" = "windows" ]; then
+    local pc="$PREFIX/lib/pkgconfig/cairo.pc"
+    [ -f "$pc" ] || die "cairo: 找不到 $pc"
+    if ! grep -q 'CAIRO_WIN32_STATIC_BUILD' "$pc"; then
+      # 用 python 改，避免 sed -i 在不同平台上的行为差异
+      python3 - "$pc" <<'PY'
+import sys
+p = sys.argv[1]
+with open(p, 'r', encoding='utf-8', newline='') as f:
+    s = f.read()
+lines = s.splitlines(True)
+out = []
+done = False
+for ln in lines:
+    if ln.startswith('Cflags:') and not done:
+        out.append(ln.rstrip('\n') + ' -DCAIRO_WIN32_STATIC_BUILD\n')
+        done = True
+    else:
+        out.append(ln)
+if not done:
+    sys.exit("cairo.pc 里没有 Cflags 行，无法注入")
+with open(p, 'w', encoding='utf-8', newline='') as f:
+    f.write(''.join(out))
+print("已给 cairo.pc 注入 -DCAIRO_WIN32_STATIC_BUILD")
+PY
+    fi
+    ok "cairo.pc 已带 CAIRO_WIN32_STATIC_BUILD"
+  fi
+
   require_pc cairo
 }
 
