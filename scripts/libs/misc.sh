@@ -458,7 +458,10 @@ typedef HRESULT (__stdcall *pCoIncrementMTAUsage_t) (CO_MTA_USAGE_COOKIE*);'
     local pc="$PREFIX/lib/pkgconfig/cairo.pc"
     [ -f "$pc" ] || die "cairo: 找不到 $pc"
     if ! grep -q 'CAIRO_WIN32_STATIC_BUILD' "$pc"; then
-      # 用 python 改，避免 sed -i 在不同平台上的行为差异
+      # 用 python 改，避免 sed -i 在不同平台上的行为差异。
+      # 注意：这里**不能** print 中文 —— MSYS2 的 Python 默认 stdout 是 cp1252，
+      # 输出中文会抛 UnicodeEncodeError 把整个构建打挂（实测踩过一次）。
+      # 需要提示就交给外面的 ok/warn 打（bash 侧没这个问题）。
       python3 - "$pc" <<'PY'
 import sys
 p = sys.argv[1]
@@ -474,11 +477,12 @@ for ln in lines:
     else:
         out.append(ln)
 if not done:
-    sys.exit("cairo.pc 里没有 Cflags 行，无法注入")
+    sys.stderr.write("cairo.pc has no Cflags line\n")
+    sys.exit(1)
 with open(p, 'w', encoding='utf-8', newline='') as f:
     f.write(''.join(out))
-print("已给 cairo.pc 注入 -DCAIRO_WIN32_STATIC_BUILD")
 PY
+      [ $? -eq 0 ] || die "cairo: 给 cairo.pc 注入 CAIRO_WIN32_STATIC_BUILD 失败"
     fi
     ok "cairo.pc 已带 CAIRO_WIN32_STATIC_BUILD"
   fi

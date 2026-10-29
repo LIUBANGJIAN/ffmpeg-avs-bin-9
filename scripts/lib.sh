@@ -551,6 +551,8 @@ if tup(cur) < tup(minver):
         f.write(s)
     print("[pc_ensure_version] %s: %s -> %s" % (name, cur, minver), file=sys.stderr)
 else:
-    print("[pc_ensure_version] %s: %s (已达标)" % (name, cur), file=sys.stderr)
+    # 这里不能写中文：MSYS2 的 Python stdout/stderr 默认 cp1252，
+    # 输出非 ASCII 会抛 UnicodeEncodeError 把整个构建打挂。
+    print("[pc_ensure_version] %s: %s (already ok)" % (name, cur), file=sys.stderr)
 PY
 }
