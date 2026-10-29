@@ -386,6 +386,36 @@ build_cairo() {
   # pixman 必须已经在 prefix 里，否则 meson 会退回 subproject wrap 联网拉取
   require_pc pixman-1
 
+  # Windows：cairo 无条件编 win32 后端（meson.build 里是
+  #   `if host_machine.system() == 'windows'`，没有开关能关掉），
+  # 而 cairo-win32-system.c 用了 Windows 8+ 的 COM API CoIncrementMTAUsage，
+  # 它依赖 objbase.h 里的 CO_MTA_USAGE_COOKIE。MinGW 的 objbase.h 没这个 typedef，
+  # 实测报错：
+  #   error: unknown type name 'CO_MTA_USAGE_COOKIE'
+  #   error: unknown type name 'pCoIncrementMTAUsage_t'
+  #
+  # 它只是个不透明句柄，语义上等价于 PVOID，补一个 typedef 即可。
+  # 用 edit_exact 而不是 patch(1)：锚点必须精确匹配 1 次，上游改了会立刻报错，
+  # 不会出现"看起来打了其实没打"的半残产物。
+  if [ "${TARGET_OS:-}" = "windows" ]; then
+    local sysc="$dir/src/win32/cairo-win32-system.c"
+    [ -f "$sysc" ] || die "cairo: 找不到 src/win32/cairo-win32-system.c"
+    edit_exact "$sysc" \
+'#include <stdbool.h>
+
+typedef HRESULT (__stdcall *pCoIncrementMTAUsage_t) (CO_MTA_USAGE_COOKIE*);' \
+'#include <stdbool.h>
+
+/* MinGW 的 objbase.h 没有 CO_MTA_USAGE_COOKIE（Windows 8+ 的 COM API）。
+ * 它只是个不透明句柄，语义等价于 PVOID，补上即可。
+ * 只在 MinGW 下补：MSVC 的 SDK 头文件里本来就有，重复定义会冲突。 */
+#if defined(__MINGW32__) && !defined(CO_MTA_USAGE_COOKIE)
+typedef PVOID CO_MTA_USAGE_COOKIE;
+#endif
+
+typedef HRESULT (__stdcall *pCoIncrementMTAUsage_t) (CO_MTA_USAGE_COOKIE*);'
+  fi
+
   # cairo 的选项类型也不统一：只有 gtk_doc 是 boolean，其余都是 feature。
   # （spectre / symbol-lookup 是 feature，写成 false 会让 meson setup 直接报错。）
   meson_build "$dir" cairo \
