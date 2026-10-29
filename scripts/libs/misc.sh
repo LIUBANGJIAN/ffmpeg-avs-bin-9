@@ -328,6 +328,28 @@ build_pixman() {
   dep_needed pixman || return 0
   local dir; dir="$(fetch pixman)"
 
+  local extra=()
+  # Android 的 ARM 上 pixman-arm.c 会 #include <cpu-features.h>，
+  # 而 NDK 不给这个头文件开 -I（它属于 libandroid，API 19 桥接层）。
+  # 实测报错：pixman-arm.c:98:10: fatal error: 'cpu-features.h' file not found
+  # pixman 为此专门留了 cpu-features-path 选项：指向含 cpu-features.[ch] 的目录，
+  # 它会把这俩源文件直接编进自己的静态库，不依赖 libandroid。
+  # NDK 里这份源码在 $ANDROID_NDK_HOME/sources/android/cpufeatures/。
+  case "${TARGET_OS:-}/${TARGET_ARCH:-}" in
+    android/arm*)
+      local cf="${ANDROID_NDK_HOME:-}/sources/android/cpufeatures"
+      if [ -f "$cf/cpu-features.h" ]; then
+        extra+=("-Dcpu-features-path=$cf")
+        log "pixman: 使用 NDK 的 cpu-features（$cf）"
+      else
+        # 兜底：不编 NEON/ARM SIMD 路径，纯 C 也能出正确结果，只是慢。
+        # 这比整个构建失败好，但要让它在日志里可见。
+        warn "pixman: 找不到 NDK 的 cpufeatures，关掉 NEON/ARM-SIMD（纯 C）"
+        extra+=("-Dneon=disabled" "-Darm-simd=disabled" "-Da64-neon=disabled")
+      fi
+      ;;
+  esac
+
   # 注意 pixman 的选项类型不统一：gnuplot / timers 是 boolean，
   # 其余（tests/demos/gtk/libpng/openmp）是 feature。给 boolean 传 'disabled'
   # 会让 meson setup 直接报 "Option "gnuplot" value disabled is not boolean"。
@@ -338,7 +360,8 @@ build_pixman() {
     -Dlibpng=disabled \
     -Dopenmp=disabled \
     -Dgnuplot=false \
-    -Dtimers=false
+    -Dtimers=false \
+    "${extra[@]}"
 
   require_pc pixman-1
 }
