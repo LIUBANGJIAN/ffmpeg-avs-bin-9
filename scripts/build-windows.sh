@@ -42,6 +42,14 @@ export CFLAGS="-O2 -pipe -fno-ident \
 export CXXFLAGS="$CFLAGS"
 export LDFLAGS="-static -static-libgcc -static-libstdc++"
 export EXTRA_CFLAGS="-D__USE_MINGW_ANSI_STDIO=1"
+# cairo 静态库必须带这个宏，否则它的头文件会给函数加 __declspec(dllimport)，
+# 链接时报 `undefined reference to __imp_cairo_create`。
+#
+# 按理说这个宏该由 cairo.pc 的 Cflags 传（我们在 build_cairo 里已经往 pc 里补了），
+# 但实测 CI 上 pkg-config --cflags 没能把它带进 FFmpeg 的编译命令，链接仍然失败。
+# 这里在全局 cflags 再兜一层 —— 对本项目其它库无副作用（宏名是 cairo 专属的，
+# 别的库不会读到），cairo 自己重复定义也无害。
+export EXTRA_CFLAGS="$EXTRA_CFLAGS -DCAIRO_WIN32_STATIC_BUILD"
 
 # C++ 运行库由 gcc 驱动时需要显式带；其余是 openssl/SDL2 静态链接要用到的 win32 系统库
 export EXTRA_LIBS="-lstdc++ -lws2_32 -lcrypt32 -lbcrypt -lsecur32 -luserenv -lgdi32 -lwinmm -lole32 -loleaut32 -luuid -lshell32 -limm32 -lversion -lshlwapi -lpsapi"

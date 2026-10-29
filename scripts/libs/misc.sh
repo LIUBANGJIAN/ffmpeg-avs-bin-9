@@ -485,6 +485,13 @@ PY
       [ $? -eq 0 ] || die "cairo: 给 cairo.pc 注入 CAIRO_WIN32_STATIC_BUILD 失败"
     fi
     ok "cairo.pc 已带 CAIRO_WIN32_STATIC_BUILD"
+
+    # 把 pkg-config 实际吐出来的 flags 打进日志。
+    # 之前 CI 上链接仍然缺这个宏，但日志里看不出 pkg-config 到底给了什么，
+    # 只能靠猜。这行是排查用的：下轮若还失败，直接看这里就知道是
+    # 「pc 没写进去」还是「pkg-config 没把它吐出来」。
+    log "cairo.pc Cflags 行：$(grep -a '^Cflags:' "$pc" || echo '(无)')"
+    log "pkg-config --cflags cairo 输出：$(pkg-config --cflags cairo 2>&1)"
   fi
 
   require_pc cairo
