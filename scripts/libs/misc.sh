@@ -472,6 +472,82 @@ build_libvpl() {
   dep_needed libvpl || return 0
   local dir; dir="$(fetch libvpl)"
 
+  # Windows/MinGW：libvpl 的 mfx_dispatcher_defs.h 写了
+  #     #if _MSC_VER < 1400
+  #         #define wcscpy_s(to,to_size,from) \
+  #             (void)(to_size); \
+  #             wcscpy(to, from)
+  #     ...
+  #     #endif
+  # MinGW 不定义 _MSC_VER，预处理器按 0 处理 ⇒ 0 < 1400 成立 ⇒ 走进这个分支。
+  # 而这个多行宏本身是坏的：调用处是 `return 0 == wcscpy_s(...)`，
+  # 展开后变成 `return 0 == (void)(n); wcscpy(...);`，语法直接崩：
+  #     error: expected ')' before ';' token
+  #     error: stray declaration / void value not ignored
+  # 连带把 mingw 的 stralign.h 也拖下水（208 行）。
+  #
+  # 上游 2.13 / 2.14 / 2.15 都没修，升级版本没用，只能本地改。
+  # 改法：让 MinGW 不进那个分支（它本来就不该进 —— MinGW 没有 wcscpy_s），
+  # 另给一个语义等价的 inline 实现（返回 errno_t，0 = 成功，与调用处的
+  # `return 0 == wcscpy_s(...)` 判据一致）。
+  if [ "${TARGET_OS:-}" = "windows" ]; then
+    local defs="$dir/libvpl/src/windows/mfx_dispatcher_defs.h"
+    [ -f "$defs" ] || die "libvpl: 找不到 libvpl/src/windows/mfx_dispatcher_defs.h"
+
+    # 用 heredoc 存新旧两段，避免 C 源码里的单引号与 bash 的 '...' 打架
+    local vpl_old vpl_new
+    vpl_old=$(cat <<'VPLOLD'
+#if _MSC_VER < 1400
+    #define wcscpy_s(to, to_size, from) \
+        (void)(to_size);                \
+        wcscpy(to, from)
+    #define wcscat_s(to, to_size, from) \
+        (void)(to_size);                \
+        wcscat(to, from)
+#endif
+VPLOLD
+)
+    vpl_new=$(cat <<'VPLNEW'
+#if !defined(__MINGW32__) && _MSC_VER < 1400
+    #define wcscpy_s(to, to_size, from) \
+        (void)(to_size);                \
+        wcscpy(to, from)
+    #define wcscat_s(to, to_size, from) \
+        (void)(to_size);                \
+        wcscat(to, from)
+#endif
+
+/* MinGW 没有 wcscpy_s / wcscat_s（MSVC CRT 专有），但调用处会检查返回值：
+ *     return 0 == wcscpy_s(pPath, pathSize, name) ? MFX_ERR_NONE : ...
+ * 所以给语义一致的实现：成功返回 0，超长返回 ERANGE 并截断置零。 */
+#if defined(__MINGW32__)
+#include <cerrno>
+#include <cwchar>
+static inline errno_t vpl_wcscpy_s(wchar_t *dst, size_t dstsz, const wchar_t *src)
+{
+    if (!dst || dstsz == 0) return EINVAL;
+    size_t i = 0;
+    for (; src && src[i] && i + 1 < dstsz; i++) dst[i] = src[i];
+    bool truncated = (src && src[i] != 0);
+    dst[i] = 0;
+    return truncated ? ERANGE : 0;
+}
+static inline errno_t vpl_wcscat_s(wchar_t *dst, size_t dstsz, const wchar_t *src)
+{
+    if (!dst || dstsz == 0) return EINVAL;
+    size_t i = 0;
+    while (i < dstsz && dst[i]) i++;
+    if (i >= dstsz) return EINVAL;
+    return vpl_wcscpy_s(dst + i, dstsz - i, src);
+}
+#define wcscpy_s vpl_wcscpy_s
+#define wcscat_s vpl_wcscat_s
+#endif
+VPLNEW
+)
+    edit_exact "$defs" "$vpl_old" "$vpl_new"
+  fi
+
   # 只要 dispatcher 那个静态库，不要 examples / tools / 测试
   cmake_build "$dir" libvpl \
     -DCMAKE_INSTALL_LIBDIR=lib \
