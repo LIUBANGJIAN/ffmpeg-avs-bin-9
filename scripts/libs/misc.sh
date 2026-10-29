@@ -317,7 +317,7 @@ build_sdl2() {
 # configure 里就一行：drawvg_filter_deps="cairo"，检测走 require_pkg_config cairo。
 # 所以只要有 cairo.pc 就行，不关心后端。
 #
-# 关掉全部可选后端（xlib/xcb/glib/freetype/fontconfig/png/zlib/quartz/dwrite），
+# 关掉全部可选后端（xlib/xcb/glib/freetype/fontconfig/png/zlib/quartz），
 # 原因：
 #   - 我们只用 cairo 画 SVG，image surface 足够，不需要任何 windowing 后端
 #   - glib 会拖进 pkg-config + libffi 一整条链；freetype/fontconfig 我们虽然
@@ -418,6 +418,14 @@ typedef HRESULT (__stdcall *pCoIncrementMTAUsage_t) (CO_MTA_USAGE_COOKIE*);'
 
   # cairo 的选项类型也不统一：只有 gtk_doc 是 boolean，其余都是 feature。
   # （spectre / symbol-lookup 是 feature，写成 false 会让 meson setup 直接报错。）
+  #
+  # dwrite 必须 enabled 而不是 disabled：
+  # cairo 1.18.6 有个自身的疏漏 —— cairo_win32_dwrite_finalize() 的**声明**
+  # 包在 #ifdef CAIRO_HAS_DWRITE_FONT 里，但 cairo-win32-system.c 里的**调用**
+  # 没有包。关掉 dwrite 就链接失败：
+  #   undefined reference to `cairo_win32_dwrite_finalize'
+  # 开 dwrite 只多链 d2d1 / dwrite / windowscodecs 三个 Windows 系统库，
+  # MinGW 自带，不引入任何外部依赖。
   meson_build "$dir" cairo \
     -Dxlib=disabled \
     -Dxcb=disabled \
@@ -428,7 +436,7 @@ typedef HRESULT (__stdcall *pCoIncrementMTAUsage_t) (CO_MTA_USAGE_COOKIE*);'
     -Dpng=disabled \
     -Dzlib=disabled \
     -Dquartz=disabled \
-    -Ddwrite=disabled \
+    -Ddwrite=enabled \
     -Dgtk2-utils=disabled \
     -Dgtk_doc=false \
     -Dtests=disabled \
