@@ -328,13 +328,17 @@ build_pixman() {
   dep_needed pixman || return 0
   local dir; dir="$(fetch pixman)"
 
+  # 注意 pixman 的选项类型不统一：gnuplot / timers 是 boolean，
+  # 其余（tests/demos/gtk/libpng/openmp）是 feature。给 boolean 传 'disabled'
+  # 会让 meson setup 直接报 "Option "gnuplot" value disabled is not boolean"。
   meson_build "$dir" pixman \
     -Dtests=disabled \
     -Ddemos=disabled \
     -Dgtk=disabled \
     -Dlibpng=disabled \
     -Dopenmp=disabled \
-    -Dgnuplot=disabled
+    -Dgnuplot=false \
+    -Dtimers=false
 
   require_pc pixman-1
 }
@@ -359,6 +363,8 @@ build_cairo() {
   # pixman 必须已经在 prefix 里，否则 meson 会退回 subproject wrap 联网拉取
   require_pc pixman-1
 
+  # cairo 的选项类型也不统一：只有 gtk_doc 是 boolean，其余都是 feature。
+  # （spectre / symbol-lookup 是 feature，写成 false 会让 meson setup 直接报错。）
   meson_build "$dir" cairo \
     -Dxlib=disabled \
     -Dxcb=disabled \
@@ -375,8 +381,8 @@ build_cairo() {
     -Dtests=disabled \
     -Dlzo=disabled \
     -Dtee=disabled \
-    -Dspectre=false \
-    -Dsymbol-lookup=false
+    -Dspectre=disabled \
+    -Dsymbol-lookup=disabled
 
   require_pc cairo
 }
