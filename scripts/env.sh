@@ -113,7 +113,12 @@ DEPS=(
   # ========== Windows 专属 ==========
   # 硬件编码器头文件：只要头文件，不需要 CUDA / 运行库
   "nvcodec|tar|https://github.com/FFmpeg/nv-codec-headers/archive/refs/tags/n12.2.72.0.tar.gz|"
-  "amf|tar|https://github.com/GPUOpen-LibrariesAndSDKs/AMF/archive/refs/tags/v1.4.33.tar.gz|"
+  # AMF 1.4.33 太旧：FFmpeg 9.0 的 configure 里写死了
+  #   (AMF_VERSION_MAJOR << 48 | MINOR << 32 | RELEASE << 16 | BUILD) >= 0x1000500020000
+  # 即要求 MINOR >= 5。1.4.33 是 0x1000400210000，不达标 ⇒ amf 被静默 disable，
+  # 随后 "ERROR: amf requested but not found"。
+  # 1.5.2 算出正好 0x1000500020000，卡在下限上。
+  "amf|tar|https://github.com/GPUOpen-LibrariesAndSDKs/AMF/archive/refs/tags/v1.5.2.tar.gz|"
   "libvpl|tar|https://github.com/intel/libvpl/archive/refs/tags/v2.13.0.tar.gz|"
   # ffplay 需要 SDL2
   "sdl2|tar|https://github.com/libsdl-org/SDL/archive/refs/tags/release-2.30.9.tar.gz|"

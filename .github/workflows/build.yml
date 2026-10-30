@@ -72,22 +72,36 @@ jobs:
               # 这里对工具链做一次强制重装 + 文件级验证，把残缺修掉再往下走。
               echo "== 校验工具链完整性 =="
               CHECK_OK=1
-              # 注意：这个脚本是 set -eo pipefail，下面两条 ls 失败会让整个
-              # step 直接退出。所以用 set +e 局部关掉，只看 CHECK_OK 的结果。
+              # 只查编译器能否真的工作，不查 stdbit.h —— 那个头文件 GCC 主线
+              # 并没有（FFmpeg 有自己的 compat/stdbit fallback，检测失败也不致命），
+              # 拿它当完整性判据会永远误报。
               set +e
-              for f in /ucrt64/lib/gcc/x86_64-w64-mingw32/*/include/stdbit.h \
-                       /ucrt64/lib/gcc/x86_64-w64-mingw32/*/cc1.exe; do
-                if ! ls $f >/dev/null 2>&1; then
-                  echo "缺文件：$f"
-                  CHECK_OK=0
-                fi
-              done
+              echo 'int main(void){return 0;}' > /tmp/_probe.c
+              gcc /tmp/_probe.c -o /tmp/_probe.exe >/dev/null 2>&1
+              CHECK_OK=$?
               set -e
-              if [ "$CHECK_OK" = "0" ]; then
+              if [ "$CHECK_OK" != "0" ]; then
                 echo "== 工具链不完整，强制重装 =="
-                pacman -S --noconfirm mingw-w64-ucrt-x86_64-gcc \
-                  mingw-w64-ucrt-x86_64-crt mingw-w64-ucrt-x86_64-headers \
+                # 关键：必须用 --overwrite，否则 pacman 看到数据库里"已装"会拒绝重装，
+                # 只在本地有残缺文件时尤其如此（文件缺了但数据库记着装过）。
+                # 先删包再装也不行 —— 依赖链会被一起拆掉。
+                pacman -S --noconfirm --overwrite '/' \
+                  mingw-w64-ucrt-x86_64-gcc \
+                  mingw-w64-ucrt-x86_64-crt \
+                  mingw-w64-ucrt-x86_64-headers \
+                  mingw-w64-ucrt-x86_64-libgcc \
+                  mingw-w64-ucrt-x86_64-libstdc++ \
                   || { echo "== 重装失败，换镜像 =="; sleep 5; continue; }
+                # 重装后再验一次，还不行就换镜像
+                set +e
+                gcc /tmp/_probe.c -o /tmp/_probe.exe >/dev/null 2>&1
+                STILL=$?
+                set -e
+                if [ "$STILL" != "0" ]; then
+                  echo "== 重装后 gcc 仍无法编译，换镜像 =="
+                  sleep 5
+                  continue
+                fi
               fi
               echo "== 装包成功（$M）=="
               exit 0

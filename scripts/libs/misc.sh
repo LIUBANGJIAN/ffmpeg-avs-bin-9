@@ -630,7 +630,30 @@ build_amf() {
 
   mkdir -p "$PREFIX/include"
   cp -rf "$dir/amf/public/include" "$PREFIX/include/AMF"
-  ok "安装 include/AMF（$(ls "$PREFIX/include/AMF" | wc -l) 个头文件）"
+
+  # FFmpeg 9.0 的 configure 对 AMF 有版本下限（见 env.sh 里那条注释）：
+  #   (MAJOR << 48 | MINOR << 32 | RELEASE << 16 | BUILD) >= 0x1000500020000
+  # 不达标时 configure 会**静默 disable** amf，然后报一句毫不相干的
+  #   ERROR: amf requested but not found
+  # 在这里先算一遍，把问题挡在依赖阶段，别等 30 分钟后 configure 才炸。
+  local vh="$PREFIX/include/AMF/core/Version.h"
+  [ -f "$vh" ] || die "amf: 找不到 AMF/core/Version.h"
+  local maj min rel bld got
+  maj=$(sed -n 's/^#define AMF_VERSION_MAJOR[[:space:]]*\([0-9]*\).*/\1/p' "$vh" | head -1)
+  min=$(sed -n 's/^#define AMF_VERSION_MINOR[[:space:]]*\([0-9]*\).*/\1/p' "$vh" | head -1)
+  rel=$(sed -n 's/^#define AMF_VERSION_RELEASE[[:space:]]*\([0-9]*\).*/\1/p' "$vh" | head -1)
+  bld=$(sed -n 's/^#define AMF_VERSION_BUILD_NUM[[:space:]]*\([0-9]*\).*/\1/p' "$vh" | head -1)
+  got=$(python3 -c "print('%x' % ((${maj:-0}<<48)|(${min:-0}<<32)|(${rel:-0}<<16)|(${bld:-0})))")
+  # 0x1000500020000 -> 把要求也按同样方式比，用整数比更稳
+  if ! python3 -c "
+import sys
+got = (${maj:-0}<<48)|(${min:-0}<<32)|(${rel:-0}<<16)|(${bld:-0})
+need = 0x1000500020000
+sys.exit(0 if got >= need else 1)
+"; then
+    die "amf $maj.$min.$rel 太旧（0x$got < 0x1000500020000），FFmpeg 会静默禁用 amf。请升级 AMF 版本。"
+  fi
+  ok "安装 include/AMF $maj.$min.$rel（版本号满足 FFmpeg 要求 0x$got）"
 }
 
 # ------------------------------------------------------------------------------
