@@ -124,10 +124,29 @@ fetch() {
     if [ ! -d "$dir/.git" ]; then
       log "克隆 $name ($ref)"
       rm -rf "$dir"
-      git clone --quiet "$url" "$dir" || die "克隆失败：$url"
+      local ca
+      for ca in 1 2 3; do
+        git clone --quiet "$url" "$dir" && break
+        warn "$name: 克隆第 $ca 次失败，重试…"
+        rm -rf "$dir"
+        [ "$ca" = "3" ] && die "克隆失败：$url（已重试 3 次）"
+        sleep 3
+      done
     fi
-    ( cd "$dir" && git fetch --quiet origin && git checkout --quiet "$ref" ) \
-      || die "$name 切到 $ref 失败"
+    # fetch + checkout 要重试：videolan 的 x264 仓库偶发超时/断连，
+    # v6.1.6-avs.3 那一轮 linux 就卡在这里（"x264 切到 stable 失败"），
+    # 而同轮 windows/android 全绿 —— 纯网络抖动，不是代码问题。
+    # 每次重试重新 fetch；3 次都失败才 die。
+    local attempt rc=1
+    for attempt in 1 2 3; do
+      if ( cd "$dir" && git fetch --quiet origin && git checkout --quiet "$ref" ); then
+        rc=0
+        break
+      fi
+      warn "$name: fetch/checkout 第 $attempt 次失败，重试…"
+      sleep 3
+    done
+    [ "$rc" = "0" ] || die "$name 切到 $ref 失败（已重试 3 次）"
     printf '%s\n' "$dir"
     return 0
   fi
