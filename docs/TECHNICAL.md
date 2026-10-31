@@ -406,18 +406,67 @@ GitHub 的 tag tarball 里既没有 `VERSION` 也没有 `.git`，
 ⚠️ **6.1.6 仓库不需要这套**：FFmpeg 6.1 主线 `configure` 里没有 drawvg，
 装了 cairo 也无用武之地。这不是漏同步。
 
-### 7.4 Android 特殊处理
+### 7.4 支持的 Android 版本
+
+| ABI | 最低 API | 最低系统 | 产物包 |
+|---|---|---|---|
+| `armeabi-v7a` | **19** | Android **4.4 KitKat**（含 4.4.2） | `…-android-armv7-api19.zip` |
+| `arm64-v8a` | **21** | Android 5.0 Lollipop | `…-android-arm64-api21.zip` |
+
+**为什么停在 API 19**：NDK r26 起官方移除 KitKat 支持，r25c 是最后一个还能编 4.4 的。
+再往下要退到 r23 以前、垫片工作量翻倍，而 armv7 + API 19 已覆盖存量老机。
+arm64 从 5.0 才存在，所以是 21，不是「选择」而是客观下限。
+
+**产物二进制实测**（解压 release 包验证，两仓一致）：
+
+```
+.note.android.ident  ->  api_level = 19
+ELF                  ->  32-bit ARM, type=DYN (PIE)
+PT_INTERP            ->  /system/bin/linker          # 32 位链接器，4.4 就是这个路径
+NEEDED               ->  libm.so, libc.so, libdl.so  # 全是 4.4 自带
+```
+
+`NEEDED` 只有三个系统库、其余全部静态链进去 ⇒ 不挑系统版本，也不要求设备上
+有 `libc++_shared.so`。**只出 armv7/arm64，没有 x86/x86_64 包**，
+Intel 芯安卓设备（ZenFone 那批）用不了。
+
+### 7.5 Android 特殊处理
 
 | 机制 | 说明 |
 |---|---|
-| `api19_compat.c` | 495 行垫片：NDK r25c 在 API 19 上缺的 libc 函数（uselocale/newlocale/…） |
+| `api19_compat.c` | 495 行垫片，补 13 个 bionic 到 API 21 才提供的符号（清单见下） |
+| `-DHB_NO_SETLOCALE` | API<21 时关掉 harfbuzz 对 newlocale/freelocale/uselocale 的调用 |
+| `--disable-iconv` | API 19 的 bionic 没有 iconv，留着会让 configure 探测出一堆假阳性 |
 | `fix_android_pc_files` | 修 .pc 里的绝对路径和 `-L` 顺序 |
 | `scan_avs_deplib` | 扫 MSVC 残留的 `/DEPENDENTLOADFLAG` 之类指令，只有 NDK 的 lld 会当真 |
 | `verify_cross_binary` | 交叉编译产物不能跑，改用 `file` + `readelf` + `strings` 静态取证 |
 
+**能落到 API 19 靠三层，缺任一层 armv7 包都编不出来**：
+
+1. **`libc++_static.a` 是按 API 21 编的**。NDK r25c 的 `locale.o` 直接引用
+   `mbsnrtowcs` / `mbtowc` / `localeconv` / `strtoll_l` / `strtoull_l` /
+   `strtold_l` / `wcstoll` / `wcstoull` / `wcstof` 九个符号，API 19 上没有 → 链接失败。
+   垫片给最小实现（bionic 只有 `"C"` locale，语义可放心简化）。另外还补了
+   `newlocale` / `freelocale` / `uselocale` / `mbsinit`，共 13 个。
+2. **harfbuzz 也会调 `newlocale` / `freelocale` / `uselocale`**，而垫片只挂在
+   **FFmpeg** 的 `--extra-libs` 上，不参与依赖库自己的构建 —— harfbuzz 由 meson
+   独立编译、独立链接，够不到垫片。meson 的 `has_function` 探测用通用 stub 能过，
+   按 API 19 真链才炸，所以只能在源码层用官方开关 `HB_NO_SETLOCALE` 绕开 ——
+   它把 `hb_locale_t` 定义成 `void *` 后连参数都不展开，比补符号更干净。
+3. **垫片必须挂在 `--extra-libs` 的最后**，即在 `-lc++_static` 之后。
+   否则 `locale.o` 的未定义引用还没出现，链接器不会去拉它。
+
+垫片**故意不 include 任何系统头文件**：NDK unified header 里这些函数带
+`__INTRODUCED_IN(21)`，在 `__ANDROID_API__ < 21` 的编译单元里一提到就报
+`is unavailable: introduced in Android 21`。所以它自带类型、参数只用指针和定宽整数，
+与真实原型 ABI 一致。只在 API<21 时编译，arm64 用不到。
+
 **为什么不能跑 smoke_test**：ARM 二进制在 x86 runner 上会 `Exec format error`，
 看起来像构建失败。`verify_cross_binary` 改查：
 ELF 架构 / NEEDED 里有无非 bionic 库 / AVS 符号是否链进去。
+
+⚠️ **没有在真机 4.4.2 上验证过**。CI 只能做到结构取证，要真验证得
+`adb push` 到 `/data/local/tmp`、`chmod 755`、跑 `./ffmpeg -version`。
 
 ---
 
@@ -444,14 +493,15 @@ concurrency:
 
 ### 8.2 耗时基线
 
-| job | 耗时 |
-|---|---|
-| windows | **43 min**（cairo 让它从 34 涨到 43） |
-| linux | 15~23 min |
-| android-arm64 | 7~10 min |
-| android-armv7 | 6~10 min |
+| job | 单独跑 | 两仓同时跑（run#41164836073 实测） |
+|---|---|---|
+| windows | 43~52 min | **58 min** |
+| linux | 15~22 min | **23 min** |
+| android-arm64 | 7~10 min | **10 min** |
+| android-armv7 | 6~10 min | **9 min** |
 
-两仓同时跑会抢 CPU，实测 windows 从 43 涨到 60 min。
+两仓同时跑会抢 CPU：windows 从 43 涨到 58 min，这就是并发代价。
+一批全绿要等 **55 分钟左右**，别在 20 分钟时就怀疑卡住。
 
 ### 8.3 产物断言
 
