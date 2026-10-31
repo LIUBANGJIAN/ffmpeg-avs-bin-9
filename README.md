@@ -4,9 +4,9 @@
 
 由 GitHub Actions 从源码构建，产物是可直接拷走使用的单文件可执行程序。
 
-> 与 [`ffmpeg-avs-bin`](https://github.com/LIUBANGJIAN/ffmpeg-avs-bin)（锁 6.1.6）并列：
+> 与 [`ffmpeg-avs-bin-6`](https://github.com/LIUBANGJIAN/ffmpeg-avs-bin-6)（锁 6.1.6）并列：
 > 那个是长期自用的稳定线，**这个仓库是用来验证「同一套 AVS 补丁在 FFmpeg 9 上还能不能成立」**。
-> 两个仓库脚本同源，差异只在 `env.sh` 的版本号和 `patch-ffmpeg.sh` 的版本护栏。
+> 两个仓库脚本同源，差异见文末「与 6.1.6 仓库的差异」一节。
 
 ---
 
@@ -385,6 +385,22 @@ PATH、`$TSDuck_HOME`、常见安装目录，也可以用 `--tsp` 指定。
 | 7 | AVS3 色彩透出没有真实广播流可验 | 代码路径与 FFmpeg 自带 AVS3 解码器一致，只验证了「不破坏原有编解码」 |
 | 8 | `color_range` 不映射 `sample_range` | 实测流该位为 0（limited），FFmpeg 默认也按 limited 处理，硬映射反而可能偏色 |
 | 9 | 版本串靠写 `VERSION` 文件压住 | GitHub 的 tag tarball 无 `.git`，`ffbuild/version.sh` 的 `git describe` 会向上命中本仓库 `.git`，产物版本串变成 commit sha（实测 `f052ad4`）。构建脚本在 configure 前写 `VERSION` 修正 |
+
+---
+
+### 9.1 与 6.1.6 仓库的差异
+
+两个仓库脚本同源，但**不是只有版本号不同**。已知差异：
+
+| 项 | 本仓（9.0.2） | `ffmpeg-avs-bin-6`（6.1.6） | 原因 |
+|---|---|---|---|
+| FFmpeg 版本 | 9.0.2 | 6.1.6 | 主线不同 |
+| drawvg 滤镜 | ✅ 有 | ❌ 无 | 6.1 主线 configure 里没有 drawvg，装了 cairo 也无用武之地 |
+| cairo / pixman | ✅ 构建 | ❌ 不构建 | 同上 |
+| AMF 版本 | 1.5.2 | 1.4.33 | 门槛不同：9.0 要求 `MINOR>=5`，6.1 只要求 `MINOR>=4 且 RELEASE>=29`；1.4.33 满足 6.1 但不满足 9.0 |
+| 上游巡检 workflow | ✅ 有 | ❌ 无 | 6.1 是 EOL 主线，巡检无意义 |
+
+硬件编码器（nvenc / qsv / amf）两边都有。
 
 ---
 
