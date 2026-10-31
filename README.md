@@ -274,6 +274,10 @@ patches/
 和 `autotools_build` / `cmake_build` / `meson_build`，平台差异全部收敛在 `build-*.sh` 里。
 改一个库只改一处。
 
+> **维护者请读 [`docs/TECHNICAL.md`](docs/TECHNICAL.md)** —— 里面讲清楚了：
+> 每个设计决策为什么这么定、AVS 四件套各自要改哪三处、FFmpeg 补丁的 6 处接线在哪、
+> 以及一份「踩过的坑」清单。改脚本前先翻那篇，比读代码快。
+
 ---
 
 ## 6. 构建
