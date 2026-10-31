@@ -309,7 +309,9 @@ AVS3 编码器 `libuavs3e` **至今仍未进入 FFmpeg 主线**：
 
 ### 6.2 六处接线
 
-`patch-ffmpeg.sh` 打的补丁（全部用 `edit_exact`，锚点必须精确命中 1 次）：
+`patch-ffmpeg.sh` 打的补丁（全部用 `edit_exact`，锚点必须精确命中 1 次）。
+
+> 下表的文件路径都是 **FFmpeg 源码树内部**的相对路径（`$FF_DIR/` 下），不是本仓库的文件。
 
 | # | 文件 | 内容 |
 |---|---|---|
@@ -338,7 +340,9 @@ esac
 printf '%s\n' "$FFMPEG_VERSION" > "$FF_DIR/VERSION"
 ```
 
-**为什么需要**：GitHub 的 tag tarball 里既没有 `VERSION` 也没有 `.git`，
+**为什么需要**（`ffbuild/version.sh` 指 FFmpeg 源码树里的脚本，不是本仓库的）：
+
+GitHub 的 tag tarball 里既没有 `VERSION` 也没有 `.git`，
 而 `ffbuild/version.sh` 第一个动作是 `git describe --tags --always`。
 在「没有 .git 的子目录」里跑这句，git 会**向父目录逐级查找** ——
 在 Actions 里正好命中本项目仓库的 `.git`，产物版本串变成我们的 commit sha
