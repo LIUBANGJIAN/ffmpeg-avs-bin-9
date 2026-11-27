@@ -137,6 +137,33 @@ ALL_ANCHORS_OK
 
 ## 3. 产物
 
+### 下载
+
+正式包在 [Releases](https://github.com/LIUBANGJIAN/ffmpeg-avs-bin-9/releases)，
+资产是公开的、不需要登录（Actions artifact 反而要登录且 90 天过期）。
+
+GitHub 直连不畅时，在完整链接**前面**加 `https://gh-proxy.com/`：
+
+```bash
+TAG=v9.1-avs.1          # 换成你要的版本
+FILE=ffmpeg-9.1-avs-win64-static.zip
+
+# 直连
+curl -LO "https://github.com/LIUBANGJIAN/ffmpeg-avs-bin-9/releases/download/$TAG/$FILE"
+
+# 走加速（同一个文件，镜像只做转发）
+curl -LO "https://gh-proxy.com/https://github.com/LIUBANGJIAN/ffmpeg-avs-bin-9/releases/download/$TAG/$FILE"
+```
+
+下完核对校验和：
+
+```bash
+curl -LO "https://gh-proxy.com/https://github.com/LIUBANGJIAN/ffmpeg-avs-bin-9/releases/download/$TAG/SHA256SUMS.txt"
+sha256sum -c SHA256SUMS.txt
+```
+
+> 镜像只搬运字节，不做校验。校验和一定从**同一个 Release** 取，别信第三方页面自己列的。
+
 | 平台 | runner | 产物 | 说明 |
 |---|---|---|---|
 | Windows x86_64 | `windows-latest` + MSYS2 UCRT64 | `ffmpeg.exe` `ffprobe.exe` `ffplay.exe` | 全静态，不依赖任何 DLL |
@@ -315,7 +342,36 @@ ANDROID_NDK_HOME=/opt/ndk-r25c ./scripts/build-android.sh arm64
 
 ### CI
 
-推送 / 手动触发即构建；打 `v*` tag 会把四个产物 + `SHA256SUMS.txt` 挂到 Release。
+四种触发方式，全部先过 `resolve` job 拿同一个结论（编哪个版本 / 要不要发 / tag 叫什么）：
+
+| 触发 | 做什么 |
+|---|---|
+| 推 `main` | 四平台编译，**全绿就自动打 tag 并发布**，不用人再打一次 |
+| 推 `v*` tag | 编译并发布到该 tag（想手工控制版本号时用） |
+| 每日 11:23（北京时间） | 巡检上游；有新的 9.x 正式版才编译发布，没有就 30 秒结束 |
+| 手动 | 可指定版本，留空用 `scripts/env.sh` 锁定的版本 |
+
+**版本号只有一处**：`scripts/env.sh` 的 `FFMPEG_VERSION`。workflow 里没有任何
+版本字面量，靠 `FFMPEG_VERSION` 环境变量注入（`env.sh` 写的是 `${FFMPEG_VERSION:-...}`），
+产物名也跟着变。所以追新版**不用改 build 脚本**，改一行或干脆不改（自动巡检会改）。
+
+**为什么推 main 能一次搞定、不用跑两轮**：tag 由本 workflow 用 `GITHUB_TOKEN` 推出，
+而 `GITHUB_TOKEN` 推的事件不会触发新的 workflow 运行。这本来是坑（自动提交无法触发构建），
+在这里正好变成优势 —— 产物就在当前 run 里，打完 tag 直接发版。
+⚠️ 别改成用 PAT 推 tag，那样会立刻触发第二个 run，白跑一轮 40 分钟。
+
+**自动升级的护栏**（`scripts/resolve-build.sh`）：
+
+- 只跟**同 major**（9.x）。上游出 10.x 时自动链路主动停手，开 issue 交给人
+- 升级前先跑 `local-verify-patch.sh` 预验锚点（1~2 分钟），失配就停，不浪费 40 分钟编译
+- 四平台全绿、发布成功之后才把新版本回写进 `env.sh`；失败保留旧版本，下一轮再试
+
+**tag 命名**：`v<FFmpeg版本>-avs.<序号>`，序号按同版本已有 tag 自动递增
+（`v9.1-avs.2` → 下次 `v9.1-avs.3`），不会撞车。
+
+**Release 正文**由 `scripts/make-release-notes.sh` 生成后传给 action。以前只开
+`generate_release_notes: true`，GitHub 会自动生成的「What's Changed」**整个覆盖** tag 附注 ——
+`v9.0.2-avs.2` 的 tag 里写了完整升级说明，Release 页面上一个字都没出现。
 
 ---
 

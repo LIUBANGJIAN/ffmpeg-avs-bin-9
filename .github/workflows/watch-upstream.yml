@@ -1,17 +1,21 @@
 name: watch-upstream
 
 # ==============================================================================
-# 上游巡检 —— 每周看一眼 FFmpeg 有没有发新版本
+# 上游巡检（手动通道）—— 只看，不动代码
 #
-# 三步：
-#   1) 检测  当前锁定的 9.1 与上游最新比（双源交叉，见 scripts/watch-upstream.py）
-#   2) 验证  有新版本时，在源码临时副本上跑 local-verify-patch.sh 核对 10 项锚点
-#   3) 上报  锚点全绿 -> 自动开 PR 改版本号；锚点失配 / 新 major -> 开 issue
+# ⚠️ 日常自动巡检已经合并进 build.yml 的 schedule（每天 11:23 北京时间）：
+#    检测到新的 9.x 正式版 -> 预验锚点 -> 四平台编译 -> 打 tag 发布 -> 回写 env.sh。
+#    所以这里**不再定时跑**，免得两边同时开 PR / 同时改版本号打架。
 #
-# 边界（重要）：
-#   - 不会自动合并、不会自动推 main。GITHUB_TOKEN 推的提交不会触发 build.yml，
-#     想真出产物必须由人 merge 这个 PR，merge 动作才会正常触发四平台构建。
-#   - 同一版本只报一次。issue/PR 标题里带版本号，重跑靠标题去重，不会刷屏。
+# 本 workflow 保留三个手动场景：
+#   1) 想先看看上游有没有新版，但不想立刻编译
+#   2) 想验证某个候选版本的锚点是否还成立（--want 指定），不触发构建
+#   3) build.yml 的自动升级失败后，来这里复现验证细节
+#
+# 流程：
+#   1) 检测  当前锁定版本与上游最新比（双源交叉，见 scripts/watch-upstream.py）
+#   2) 验证  有新版本时，在源码临时副本上跑 local-verify-patch.sh 核对锚点
+#   3) 上报  锚点失配 / 新 major -> 开 issue；锚点全绿 -> 只写摘要（升级交给 build.yml）
 #
 # 前置条件（一次性，不改也能跑，但只能开 issue）：
 #   仓库 Settings → Actions → General → Workflow permissions
@@ -19,14 +23,10 @@ name: watch-upstream
 # ==============================================================================
 
 on:
-  schedule:
-    # 每周一 03:17 UTC = 北京时间 11:17。
-    # 故意避开整点：GitHub 的 cron 在 :00 排队最严重，经常延迟十几分钟。
-    - cron: '17 3 * * 1'
   workflow_dispatch:
     inputs:
       version:
-        description: '手动指定要验证的版本（如 9.0.3）；留空则自动检测上游最新'
+        description: '手动指定要验证的版本（如 9.2）；留空则自动检测上游最新'
         required: false
         default: ''
 

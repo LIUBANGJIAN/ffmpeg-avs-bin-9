@@ -1,17 +1,38 @@
 name: build
 
-# 触发方式：
-#   1) 手动（Actions 页面 Run workflow）
-#   2) 推送到 main
-#   3) 打 tag（v*）-> 额外跑一个 release job 把产物挂到 Release
+# ==============================================================================
+# 触发方式（4 种，全部收敛到 resolve job 决定「编什么版本、要不要发布」）
+#
+#   1) push main      -> 四平台编译，全绿后**自动打 tag 并发布**（不再需要人再打一次）
+#   2) push tag v*    -> 编译 + 发布到该 tag（保留兼容，给想手工控制版本号的人）
+#   3) schedule 每日  -> 巡检上游；有新的 9.x 正式版才编译发布，没有就几十秒结束
+#   4) workflow_dispatch -> 手动，可指定版本
+#
+# 为什么 main 能自动发布而不用跑第二轮：
+#   tag 由本 workflow 用 GITHUB_TOKEN 推送，而 GITHUB_TOKEN 推的事件**不会触发
+#   workflow**。这本来是坑（自动提交无法触发构建），在这里正好变成优势 ——
+#   编译产物就在当前 run 里，打完 tag 直接发布，省掉整轮 40+ 分钟。
+#   ⚠️ 千万别把 push tag 改成用 PAT：会立刻触发第二个 run，重复编译一轮。
+# ==============================================================================
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: '指定 FFmpeg 版本（如 9.2）；留空则用 scripts/env.sh 锁定的版本'
+        required: false
+        default: ''
   push:
     branches: [main]
     tags: ['v*']
+  schedule:
+    # 每天 03:23 UTC = 北京时间 11:23。
+    # 避开整点：GitHub 的 cron 在 :00 排队最严重，实测能拖十几分钟。
+    - cron: '23 3 * * *'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # event_name 必须进 group：schedule 事件的 github.ref 也是 refs/heads/main，
+  # 不加的话「定时巡检」和「人工推 main」会互相 cancel-in-progress。
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 # 版本号的唯一权威是 scripts/env.sh —— 本文件里刻意不留任何版本字面量。
@@ -25,10 +46,70 @@ concurrency:
 
 jobs:
   # ==========================================================================
+  # 0) 决策 —— 所有触发方式的唯一收敛点
+  #
+  # 四种触发 → 一个结论：编哪个版本、要不要发布、tag 叫什么。
+  # 后面的编译与发布 job 只读它的 outputs，不再各自去猜版本。
+  #
+  # 定时巡检时这里是唯一的「提前退出」点：上游没新版本 -> publish=false ->
+  # 下面所有 job 的 if 都不成立，整轮 30 秒内结束，不烧 CPU。
+  # ==========================================================================
+  resolve:
+    name: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      issues: write        # 锚点失配 / 新 major 时开 issue
+    outputs:
+      version: ${{ steps.decide.outputs.version }}
+      tag: ${{ steps.decide.outputs.tag }}
+      publish: ${{ steps.decide.outputs.publish }}
+      bump: ${{ steps.decide.outputs.bump }}
+      bump_from: ${{ steps.decide.outputs.bump_from }}
+      trigger: ${{ steps.decide.outputs.trigger }}
+      reason: ${{ steps.decide.outputs.reason }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 要读全部已有 tag 来算 v<版本>-avs.<N> 的序号，浅克隆不够
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: 决策
+        id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: bash scripts/resolve-build.sh
+
+      - name: 摘要
+        if: always()
+        run: |
+          set -uo pipefail
+          {
+            echo "### 构建决策"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| FFmpeg 版本 | \`${{ steps.decide.outputs.version }}\` |"
+            echo "| 触发方式 | ${{ steps.decide.outputs.trigger }} |"
+            echo "| 是否发布 | ${{ steps.decide.outputs.publish }} |"
+            TAG="${{ steps.decide.outputs.tag }}"
+            [ -n "$TAG" ] && echo "| 目标 tag | \`$TAG\` |"
+            echo "| 理由 | ${{ steps.decide.outputs.reason }} |"
+            echo ""
+          } >>"$GITHUB_STEP_SUMMARY"
+
+  # ==========================================================================
   # Windows x86_64 —— MSYS2 UCRT64
   # ==========================================================================
   windows:
     name: windows-x86_64
+    needs: resolve
+    if: needs.resolve.outputs.publish == 'true'
     runs-on: windows-latest
     timeout-minutes: 180
     defaults:
@@ -130,6 +211,11 @@ jobs:
         # 用 bash 显式调用，不依赖文件的可执行位：
         # Windows 上 checkout 出来的脚本可能丢 x 位，MSYS2 里 ./x 仍能跑，
         # 但在 git 索引里是 644，到 Linux runner 就变成 Permission denied。
+        #
+        # FFMPEG_VERSION 走环境变量，不改文件：env.sh 里是 ${FFMPEG_VERSION:-9.1}，
+        # 所以外部传值优先，产物名也跟着变（ffmpeg-<版本>-avs-win64-static）。
+        env:
+          FFMPEG_VERSION: ${{ needs.resolve.outputs.version }}
         run: bash ./scripts/build-windows.sh
 
       - uses: actions/upload-artifact@v4
@@ -147,6 +233,8 @@ jobs:
   # ==========================================================================
   linux:
     name: linux-x86_64-static
+    needs: resolve
+    if: needs.resolve.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -159,23 +247,12 @@ jobs:
           key: dl-linux-${{ hashFiles('scripts/env.sh') }}
           restore-keys: dl-linux-
 
-      - name: 解析 FFmpeg 版本
-        id: ver
-        run: |
-          set -uo pipefail
-          V=$(bash -c '. ./scripts/env.sh; printf "%s" "$FFMPEG_VERSION"')
-          if [ -z "$V" ]; then
-            echo "::error::从 scripts/env.sh 读不到 FFMPEG_VERSION"
-            exit 1
-          fi
-          echo "本次构建 FFmpeg $V"
-          echo "v=$V" >>"$GITHUB_OUTPUT"
-
       - name: 在 Alpine 容器里构建
         run: |
+          echo "本次构建 FFmpeg ${{ needs.resolve.outputs.version }}"
           docker run --rm \
             -v "$PWD:/src" -w /src \
-            -e FFMPEG_VERSION="${{ steps.ver.outputs.v }}" \
+            -e FFMPEG_VERSION="${{ needs.resolve.outputs.version }}" \
             alpine:3.20 sh -c '
               set -e
               # diffutils 必须显式装：Alpine 自带的 diff 是 BusyBox 版，
@@ -211,6 +288,8 @@ jobs:
   # ==========================================================================
   android:
     name: android-${{ matrix.abi }}
+    needs: resolve
+    if: needs.resolve.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 180
     strategy:
@@ -258,6 +337,7 @@ jobs:
       - name: 构建 ${{ matrix.abi }}
         env:
           ANDROID_NDK_HOME: /opt/ndk-r25c
+          FFMPEG_VERSION: ${{ needs.resolve.outputs.version }}
         run: |
           bash ./scripts/build-android.sh ${{ matrix.abi }}
 
@@ -268,16 +348,24 @@ jobs:
           if-no-files-found: error
 
   # ==========================================================================
-  # 汇总发布 —— 只在打 tag 时跑
+  # 汇总发布 —— publish=true 就发（main 绿色 / tag / 定时升级 都走这里）
+  #
+  # 打 tag 也在这里做：用 GITHUB_TOKEN 推 tag 不会触发新的 workflow 运行，
+  # 所以编译和发版能在同一轮完成，省掉一整轮重复构建。
   # ==========================================================================
   release:
     name: release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, linux, android]
+    needs: [resolve, windows, linux, android]
+    if: needs.resolve.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -292,10 +380,109 @@ jobs:
           sha256sum *.zip > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
+      # 正文写成文件交给 action（body_path），不再让 GitHub 自动生成的
+      # 「What's Changed」把 tag 附注整个盖掉 —— 那是 v9.0.2-avs.2 踩过的坑。
+      # 两者同时给时，自动 notes 会追加在正文之后。
+      - name: 生成 Release 正文
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+          VER: ${{ needs.resolve.outputs.version }}
+          TRIGGER: ${{ needs.resolve.outputs.trigger }}
+          BUMP_FROM: ${{ needs.resolve.outputs.bump_from }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          bash scripts/make-release-notes.sh > release-body.md
+          echo "--- 正文预览（前 30 行）---"
+          head -30 release-body.md
+
+      - name: 打 tag 并推送
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -uo pipefail
+          if [ -z "$TAG" ]; then
+            echo "::error::publish=true 但 resolve 没给出 tag"
+            exit 1
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "tag $TAG 已存在（tag 触发场景），跳过创建"
+          else
+            git tag -a "$TAG" -F release-body.md
+            git push origin "$TAG"
+            echo "已推送 tag：$TAG"
+          fi
+
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.resolve.outputs.tag }}
+          name: ${{ needs.resolve.outputs.tag }}
+          body_path: release-body.md
+          generate_release_notes: true
           files: |
             artifacts/*.zip
             artifacts/SHA256SUMS.txt
           draft: false
-          generate_release_notes: true
+
+  # ==========================================================================
+  # 回写版本号 —— 只在「定时巡检自动升级」成功后
+  #
+  # 编译成功才改 env.sh：编译失败要保留旧版本，下一轮巡检会再试。
+  # 用 GITHUB_TOKEN 推，不会触发新的 build 运行（否则就变成死循环了）。
+  # ==========================================================================
+  bump:
+    name: bump-env
+    needs: [resolve, release]
+    if: needs.resolve.outputs.bump == 'true' && needs.resolve.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: 改 env.sh
+        run: |
+          set -uo pipefail
+          python3 - "${{ needs.resolve.outputs.version }}" <<'PY'
+          import re, sys, pathlib
+
+          ver = sys.argv[1]
+          p = pathlib.Path("scripts/env.sh")
+          # newline='' 必须加：Windows 上回写会把整篇改成 CRLF，
+          # 而这文件被 sh 直接 source，\r 会粘进版本号里。
+          with open(p, "r", encoding="utf-8", newline="") as f:
+              s = f.read()
+          pat = r'^FFMPEG_VERSION="\$\{FFMPEG_VERSION:-[^}]*\}"$'
+          s2, n = re.subn(pat, 'FFMPEG_VERSION="${FFMPEG_VERSION:-%s}"' % ver,
+                          s, count=1, flags=re.M)
+          if n != 1:
+              sys.exit("锚点未命中：scripts/env.sh（期望 1 处，实际 %d 处）" % n)
+          with open(p, "w", encoding="utf-8", newline="") as f:
+              f.write(s2)
+          print("  FFMPEG_VERSION -> %s" % ver)
+          PY
+
+      - name: 提交并推送
+        run: |
+          set -uo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git diff --quiet -- scripts/env.sh; then
+            echo "env.sh 无变化，跳过"
+            exit 0
+          fi
+          git add scripts/env.sh
+          # [skip ci] 是双保险：GITHUB_TOKEN 推的提交本来就不触发 workflow，
+          # 万一将来换成 PAT，这行能挡住重复构建。
+          git commit -q -m "chore: 追平 FFmpeg ${{ needs.resolve.outputs.version }} [skip ci]
+
+          由每日巡检自动升级并发布成功，产物见 tag ${{ needs.resolve.outputs.tag }}。
+          锚点在 resolve 阶段预验通过（local-verify-patch.sh ALL_ANCHORS_OK），
+          四平台实编全绿。"
+          git pull --rebase --autostash origin main || true
+          git push origin main
+          echo "env.sh 已更新到 ${{ needs.resolve.outputs.version }}"

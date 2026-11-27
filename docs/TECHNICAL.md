@@ -42,15 +42,17 @@ ffmpeg-avs-bin-9/
 │   │   ├── audio.sh        lame/ogg/vorbis/opus
 │   │   └── misc.sh         zlib/openssl/freetype/fontconfig/…/cairo/硬件编码
 │   ├── local-verify-patch.sh  本地锚点校验（3 秒，不编译）
-│   ├── watch-upstream.py      上游版本检测
-│   ├── watch-report.sh        巡检报告生成
+│   ├── resolve-build.sh       ★ 四种触发方式的唯一决策点（版本/tag/是否发布）
+│   ├── make-release-notes.sh  Release 正文生成（修 body 被自动 notes 覆盖的坑）
+│   ├── watch-upstream.py      上游版本检测（双源交叉）
+│   ├── watch-report.sh        手动巡检的上报
 │   ├── etr290.py              TR 101 290 体检
 │   └── verify-urls.sh         依赖 URL 存活性检查
 ├── patches/
 │   └── libuavs3e.c         AVS3 编码器的 FFmpeg 封装（342 行，上游没有）
 ├── .github/workflows/
-│   ├── build.yml           三平台构建 + tag 时发布
-│   └── watch-upstream.yml  每周一巡检 FFmpeg 新版
+│   ├── build.yml           三平台构建 + 自动打 tag 发布 + 每日自动升级
+│   └── watch-upstream.yml  手动巡检（只看不动，日常由 build.yml 负责）
 └── docs/TECHNICAL.md       本文档
 ```
 
@@ -519,17 +521,50 @@ AVS：  LIBDAVS2_DECODER / LIBUAVS3D_DECODER / LIBUAVS3E_ENCODER / LIBXAVS2_ENCO
 
 ### 8.4 发布流程
 
-```bash
-# 1. 确认 main 全绿（必须！tag 打在没验证的提交上会白等一轮）
-# 2. 打附注 tag
-git tag -a v9.1-avs.N -F -   # 消息会成为 release notes
-# 3. 推送
-git push origin v9.1-avs.N
+**全自动**。推 main 四平台全绿即打 tag 发 Release，不需要人再操作一次。
+
+| 触发 | 做什么 |
+|---|---|
+| 推 `main` | 编译 → 自动 tag `v<版本>-avs.<N>` → 发 Release |
+| 每日 11:23（北京时间） | 有新的 9.x 正式版 → 同上；没有则 30 秒结束 |
+| 推 `v*` tag | 编译并发布到该 tag（手工控制版本号时用） |
+| 手动 | 可指定版本；留空用 `env.sh` 锁定的版本 |
+
+**为什么能省掉一轮**：tag 由 workflow 用 `GITHUB_TOKEN` 推出，而 `GITHUB_TOKEN`
+推的事件**不会触发新的 workflow 运行**。这本来是坑（自动提交无法触发构建），
+在这里正好变成优势 —— 产物就在当前 run 里，打完 tag 直接发版。
+
+⚠️ 千万别改成用 PAT 推 tag：会立刻触发第二个 run，白跑 40 分钟。
+
+所有触发方式都在 `scripts/resolve-build.sh` 里收敛成同一个结论：
+
+| 输出 | 含义 |
+|---|---|
+| `version` | 本次编哪个 FFmpeg 版本 |
+| `tag` | 要打的 tag（`publish=false` 时为空） |
+| `publish` | 后续所有编译/发布 job 的总开关 |
+| `bump` / `bump_from` | 是否要把新版本回写进 `scripts/env.sh` |
+
+决策逻辑：
+
+```
+push main        -> version = env.sh 版本,        publish = true
+push tag v*      -> version = 从 tag 名解析,      publish = true
+schedule         -> 巡检；无新版 -> publish=false（整轮结束）
+                    有新版 9.x -> 预验锚点 -> 通过才 publish=true
+                    新 major   -> publish=false + 开 issue
+workflow_dispatch-> version = 输入值或 env.sh,    publish = true
 ```
 
-`generate_release_notes: true` 会从 tag 消息自动生成说明。
+**护栏三条**：只跟同 major（10.x 停手报 issue）、升级前先预验锚点（省掉四平台各红一次
+的 40 分钟）、四平台全绿且发布成功后才回写 `env.sh`（失败保留旧版本，下轮再试）。
 
-⚠️ **tag 必须指向已验证的提交**。核对方法：
+**Release 正文**由 `scripts/make-release-notes.sh` 生成后经 `body_path` 传给 action。
+以前只开 `generate_release_notes: true`，GitHub 自动生成的「What's Changed」会把
+tag 附注**整个覆盖** —— `v9.0.2-avs.2` 的 tag 里写了完整升级说明，Release 页面上
+一个字都没出现。现在两者并存：正文在前，自动 notes 追加在后。
+
+手工打 tag 仍然支持（走 `push tag` 分支），核对提交：
 ```bash
 git rev-parse <tag>^{commit}   # 与 git rev-parse HEAD 比对
 ```
@@ -538,22 +573,39 @@ git rev-parse <tag>^{commit}   # 与 git rev-parse HEAD 比对
 
 ## 9. 上游巡检
 
-`watch-upstream.yml` 每周一 03:17 UTC 检查 FFmpeg 是否有新版。
+巡检有两个入口，职责不重叠：
+
+| 入口 | 频率 | 职责 |
+|---|---|---|
+| `build.yml` 的 `schedule` | 每天 11:23（北京时间） | **自动升级并发布**：检测 → 预验锚点 → 四平台编译 → 打 tag 发布 → 回写 `env.sh` |
+| `watch-upstream.yml` | 手动 | **只看不动**：验证某个候选版本的锚点，不触发构建 |
 
 ```
-detect → verify → report
-  ↓        ↓        ↓
-比对版本  跑锚点校验  开 PR / 开 issue
+build.yml 每日巡检：
+  resolve(检测+预验) → windows/linux/android → release → bump
+        ↓ 无新版
+      publish=false，全部 job skip，30 秒结束
+
+watch-upstream.yml（手动）：
+  detect → verify → report
+            ↓          ↓
+       跑锚点校验   开 issue（失配 / 新 major）
 ```
 
 | 文件 | 作用 |
 |---|---|
-| `watch-upstream.py` | 抓 FFmpeg 官方 tags，与 `env.sh` 比对 |
-| `watch-report.sh` | 生成人类可读的巡检报告 |
-| `local-verify-patch.sh` | 在新版本源码上验证锚点（verify 阶段调用） |
+| `watch-upstream.py` | 双源交叉（官网 `tar.xz` + GitHub tag），与 `env.sh` 比对 |
+| `resolve-build.sh` | 四种触发方式的唯一决策点 |
+| `make-release-notes.sh` | 生成 tag 附注 / Release 正文 |
+| `watch-report.sh` | 手动巡检的上报（锚点全绿时只写摘要，不开 PR） |
+| `local-verify-patch.sh` | 在新版本源码上验证锚点 |
 
-**安全设计**：不会自动合并、不会自动推 main。`GITHUB_TOKEN` 推的提交不会触发 build.yml，
-所以 PR 需要人工合并。
+**为什么 `watch-upstream.yml` 不再定时跑**：自动升级的职责已经交给 `build.yml`，
+它再开 PR 只会两边抢着改 `scripts/env.sh`。留着它是因为「只想验锚点、不想立刻编译"
+这个场景仍然有用（`--want` 指定版本）。
+
+**双源交叉为什么必要**：官网有、GitHub 没同步 -> 追了会在下载阶段 404；
+GitHub 有、官网没发 -> 那是开发中的版本，追了等于当小白鼠。两个都过才算数。
 
 **6.1.6 仓库没有这个** —— 6.1 是 EOL 主线，巡检无意义。
 
@@ -563,17 +615,24 @@ detect → verify → report
 
 ### 10.1 升级 FFmpeg 版本
 
+**同 major 内（9.x）通常什么都不用做** —— 每日巡检会自动追平、编译、发布、回写 `env.sh`。
+
+要立刻升，或者要升到没被自动跟进的情况：
+
 ```bash
-# 1. 改 env.sh
-FFMPEG_VERSION="${FFMPEG_VERSION:-9.0.3}"
+# 方式一：手动跑 workflow，版本填目标版本（推荐，一条龙编完就发版）
+#   Actions → build → Run workflow → version = 9.2
 
-# 2. 本地验证锚点（3 秒，不用等 CI）
-./scripts/local-verify-patch.sh
+# 方式二：本地先确认锚点，再改文件
+FFMPEG_VERSION=9.2 ./scripts/local-verify-patch.sh    # 3 秒出结果
+# 通过后改 env.sh 的 FFMPEG_VERSION，推 main 即自动发布
 
-# 3. 若锚点失配，按提示改 patch-ffmpeg.sh 里的 edit_exact
-# 4. 更新 patch-ffmpeg.sh 的版本护栏
-# 5. 推 main 验证，全绿后再打 tag
+# 锚点失配时，按 [FAIL] 那一行改 patch-ffmpeg.sh 里对应的 edit_exact
 ```
+
+**跨 major（10.x）必须人工**：`patch-ffmpeg.sh` 的护栏是 `case "${FFMPEG_VERSION}" in 9.*)`，
+直接改版本号会被拦；而且跨 major 通常伴随 API 删除（6.1.6 → 9.0.2 就碰上
+`AVCodec.pix_fmts` 被整个移除）。自动链路遇到新 major 会主动停手并开 issue。
 
 **升级前必查**：
 - `EXTERNAL_LIBRARY_LIST` 里是否已收录 `libuavs3e`（若已收录，补丁可以删）
