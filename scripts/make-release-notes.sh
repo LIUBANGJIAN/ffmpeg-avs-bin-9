@@ -69,12 +69,15 @@ fi
 echo
 
 # ------------------------------------------------------------------------------
-# 产物
+# 产物 —— 一张表说清「下哪个、多大、从哪下、慢就走镜像」
+#   直连 = GitHub 原件；加速 = gh-proxy.com 前缀镜像；两者指向同一个文件。
+#   链接全部写死（TAG + 真实文件名），不给占位符，读者点一下就能下。
 # ------------------------------------------------------------------------------
-echo "### 产物"
+echo "### 资产一览"
 echo
-echo "| 平台 | 文件 | 大小 | 下载 | 说明 |"
-echo "|---|---|---|---|---|"
+echo "| 平台 | 文件 | 大小 | 直连地址 | 加速地址 | 说明 |"
+echo "|---|---|---|---|---|---|"
+_n=0
 for f in artifacts/*.zip; do
   [ -f "$f" ] || continue
   b=$(basename "$f")
@@ -87,11 +90,27 @@ for f in artifacts/*.zip; do
   esac
   # wc -c 而不是 du -h：du 受块大小与稀疏文件影响，不同平台会四舍五入出不同结果
   sz=$(awk -v b="$(wc -c <"$f")" 'BEGIN{printf "%.1f MiB", b/1048576}')
-  # 链接直接给死：填 TAG 和真实文件名，读者点一下就能下，不用自己拼
-  echo "| ${plat} | \`${b}\` | ${sz} | [下载](${FAST_BASE}/${b}) | ${note} |"
+  echo "| ${plat} | \`${b}\` | ${sz} | [直连](${DL_BASE}/${b}) | [加速](${FAST_BASE}/${b}) | ${note} |"
+  _n=$((_n + 1))
 done
+# 校验和文件也在 Release 里，一起列进表：读者不用再回头找
+if [ -f artifacts/SHA256SUMS.txt ]; then
+  _shs=$(awk -v b="$(wc -c <artifacts/SHA256SUMS.txt)" 'BEGIN{printf "%.0f B", b}')
+  echo "| 校验和 | \`SHA256SUMS.txt\` | ${_shs} | [直连](${DL_BASE}/SHA256SUMS.txt) | [加速](${FAST_BASE}/SHA256SUMS.txt) | 全部产物的 SHA-256 |"
+  _n=$((_n + 1))
+fi
 echo
-echo "\`SHA256SUMS.txt\` 为全部产物的 SHA-256 校验和：[下载](${FAST_BASE}/SHA256SUMS.txt)"
+echo "共 ${_n} 个文件。\`直连\` 走 GitHub，\`加速\` 走 \`gh-proxy.com\` 镜像（\`https://gh-proxy.com/<直连地址>\`），同一个文件。"
+echo
+echo "> 镜像只搬运字节、不做校验 —— 校验和一定从上表的 \`SHA256SUMS.txt\` 取，别信第三方页面自己列的。"
+echo
+echo '下载 + 校验：'
+echo
+echo '```bash'
+echo "curl -LO <直连地址>          # 或把前缀换成 https://gh-proxy.com/ 走加速"
+echo "curl -LO ${FAST_BASE}/SHA256SUMS.txt"
+echo 'sha256sum -c SHA256SUMS.txt  # macOS: shasum -a 256 -c'
+echo '```'
 echo
 
 # ------------------------------------------------------------------------------
@@ -117,29 +136,3 @@ cat <<'EOF'
 - Linux 产物是 musl 静态，Alpine / Debian / CentOS 都能直接跑，但**不能用系统 glibc 的 dlopen 插件**。
 
 EOF
-
-# ------------------------------------------------------------------------------
-# 下载加速 —— 给完整可点的链接，不留 TAG / 文件名占位符
-# ------------------------------------------------------------------------------
-echo "### 下载加速"
-echo
-echo "上面每个「下载」已经走 \`gh-proxy.com\` 镜像。想用直连，去掉前缀即可，指向同一个文件："
-echo
-echo "- 加速：${FAST_BASE}/ffmpeg-${VER}-avs-win64-static.zip"
-echo "- 直连：${DL_BASE}/ffmpeg-${VER}-avs-win64-static.zip"
-echo
-echo "命令行批量下 + 校验："
-echo
-echo '```bash'
-echo "for f in \\
-  ffmpeg-${VER}-avs-win64-static.zip \\
-  ffmpeg-${VER}-avs-linux64-static.zip \\
-  ffmpeg-${VER}-avs-android-armv7-api19.zip \\
-  ffmpeg-${VER}-avs-android-arm64-api21.zip \\
-  SHA256SUMS.txt; do"
-echo "  curl -LO --retry 3 \"https://gh-proxy.com/https://github.com/${REPO_SLUG}/releases/download/${TAG}/\$f\""
-echo "done"
-echo "sha256sum -c SHA256SUMS.txt      # macOS: shasum -a 256 -c"
-echo '```'
-echo
-echo "> 镜像只搬运字节、不做校验。校验和一定从这个 Release 取，别信第三方页面自己列的。"
