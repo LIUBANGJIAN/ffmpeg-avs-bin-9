@@ -139,30 +139,47 @@ ALL_ANCHORS_OK
 
 ### 下载
 
-正式包在 [Releases](https://github.com/LIUBANGJIAN/ffmpeg-avs-bin-9/releases)，
-资产是公开的、不需要登录（Actions artifact 反而要登录且 90 天过期）。
+最新正式版：**[v9.1-avs.2](https://github.com/LIUBANGJIAN/ffmpeg-avs-bin-9/releases/tag/v9.1-avs.2)**（2026-11-27）
 
-GitHub 直连不畅时，在完整链接**前面**加 `https://gh-proxy.com/`：
+资产公开、不需登录（Actions artifact 反而要登录且 90 天过期）。每个文件给两条链接，
+点「加速」那条即可——它就是把直连地址原样前面加了 `https://gh-proxy.com/`。
+
+**Windows x86_64** · `ffmpeg-9.1-avs-win64-static.zip` · 85.4 MiB
+[直连](https://github.com/LIUBANGJIAN/ffmpeg-avs-bin-9/releases/download/v9.1-avs.2/ffmpeg-9.1-avs-win64-static.zip) ·
+[加速](https://gh-proxy.com/https://github.com/LIUBANGJIAN/ffmpeg-avs-bin-9/releases/download/v9.1-avs.2/ffmpeg-9.1-avs-win64-static.zip)
+
+**Linux x86_64（musl 全静态）** · `ffmpeg-9.1-avs-linux64-static.zip` · 46.1 MiB
+[直连](https://github.com/LIUBANGJIAN/ffmpeg-avs-bin-9/releases/download/v9.1-avs.2/ffmpeg-9.1-avs-linux64-static.zip) ·
+[加速](https://gh-proxy.com/https://github.com/LIUBANGJIAN/ffmpeg-avs-bin-9/releases/download/v9.1-avs.2/ffmpeg-9.1-avs-linux64-static.zip)
+
+**Android armv7（API 19 / 4.4.2）** · `ffmpeg-9.1-avs-android-armv7-api19.zip` · 34.5 MiB
+[直连](https://github.com/LIUBANGJIAN/ffmpeg-avs-bin-9/releases/download/v9.1-avs.2/ffmpeg-9.1-avs-android-armv7-api19.zip) ·
+[加速](https://gh-proxy.com/https://github.com/LIUBANGJIAN/ffmpeg-avs-bin-9/releases/download/v9.1-avs.2/ffmpeg-9.1-avs-android-armv7-api19.zip)
+
+**Android arm64（API 21 / 5.0）** · `ffmpeg-9.1-avs-android-arm64-api21.zip` · 35.1 MiB
+[直连](https://github.com/LIUBANGJIAN/ffmpeg-avs-bin-9/releases/download/v9.1-avs.2/ffmpeg-9.1-avs-android-arm64-api21.zip) ·
+[加速](https://gh-proxy.com/https://github.com/LIUBANGJIAN/ffmpeg-avs-bin-9/releases/download/v9.1-avs.2/ffmpeg-9.1-avs-android-arm64-api21.zip)
+
+**校验和** · `SHA256SUMS.txt`
+[直连](https://github.com/LIUBANGJIAN/ffmpeg-avs-bin-9/releases/download/v9.1-avs.2/SHA256SUMS.txt) ·
+[加速](https://gh-proxy.com/https://github.com/LIUBANGJIAN/ffmpeg-avs-bin-9/releases/download/v9.1-avs.2/SHA256SUMS.txt)
+
+命令行一次下全套（Windows 用 Git Bash / WSL）：
 
 ```bash
-TAG=v9.1-avs.1          # 换成你要的版本
-FILE=ffmpeg-9.1-avs-win64-static.zip
-
-# 直连
-curl -LO "https://github.com/LIUBANGJIAN/ffmpeg-avs-bin-9/releases/download/$TAG/$FILE"
-
-# 走加速（同一个文件，镜像只做转发）
-curl -LO "https://gh-proxy.com/https://github.com/LIUBANGJIAN/ffmpeg-avs-bin-9/releases/download/$TAG/$FILE"
+TAG=v9.1-avs.2
+for f in ffmpeg-9.1-avs-win64-static.zip \
+         ffmpeg-9.1-avs-linux64-static.zip \
+         ffmpeg-9.1-avs-android-armv7-api19.zip \
+         ffmpeg-9.1-avs-android-arm64-api21.zip \
+         SHA256SUMS.txt; do
+  curl -LO --retry 3 "https://gh-proxy.com/https://github.com/LIUBANGJIAN/ffmpeg-avs-bin-9/releases/download/$TAG/$f"
+done
+sha256sum -c SHA256SUMS.txt      # macOS: shasum -a 256 -c
 ```
 
-下完核对校验和：
-
-```bash
-curl -LO "https://gh-proxy.com/https://github.com/LIUBANGJIAN/ffmpeg-avs-bin-9/releases/download/$TAG/SHA256SUMS.txt"
-sha256sum -c SHA256SUMS.txt
-```
-
-> 镜像只搬运字节，不做校验。校验和一定从**同一个 Release** 取，别信第三方页面自己列的。
+> 镜像只搬运字节、不做校验。校验和一定从**同一个 Release** 取，别信第三方页面自己列的。
+> 换版本时把上面对应 tag 的 `v9.1-avs.2` 改掉即可，文件名里的 `9.1` 也跟着版本走。
 
 | 平台 | runner | 产物 | 说明 |
 |---|---|---|---|
