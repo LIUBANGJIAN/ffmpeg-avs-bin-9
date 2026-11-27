@@ -6,7 +6,7 @@
 # 3 秒内告诉你 7 处锚点是否还匹配。比推 CI 等 50 分钟才发现锚点漂移划算得多。
 #
 # 用法：
-#   ./scripts/local-verify-patch.sh /path/to/FFmpeg-n9.0.2
+#   ./scripts/local-verify-patch.sh /path/to/FFmpeg-n9.1
 #   # 不给参数则自动下载当前 FFMPEG_VERSION 的源码到 work/ 下
 #
 # 退出码：0 全部命中；1 有锚点失配（会打印失配的文件与锚点）

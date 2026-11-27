@@ -158,7 +158,7 @@ build_ffmpeg() {
   # 的第一个动作是 `git describe --tags --always`。在「没有 .git 的子目录」里跑这句，
   # git 会**向父目录逐级查找** —— 在 Actions 里正好命中本项目仓库的 .git，
   # 于是产物版本串变成我们的 commit sha（实测 `ffprobe version f052ad4`，
-  # 完全看不出是 9.0.2）。
+  # 完全看不出是哪个 FFmpeg 版本）。
   #
   # version.sh 里 `version=$(cat VERSION)` 的优先级高于 revision，写一个就压住它。
   printf '%s\n' "$FFMPEG_VERSION" > "$FF_DIR/VERSION"

@@ -3,7 +3,7 @@
 # 巡检结果上报 —— 决定开 PR 还是开 issue
 #
 # 由 .github/workflows/watch-upstream.yml 的 report job 调用。输入全走环境变量：
-#   CUR       当前锁定版本，如 9.0.2
+#   CUR       当前锁定版本，如 9.1
 #   VER       上游新版本，如 9.0.3
 #   KIND      patch | minor | major
 #   MANUAL    true/false —— major 时为 true（补丁护栏只认 9.*，必须人工接入）

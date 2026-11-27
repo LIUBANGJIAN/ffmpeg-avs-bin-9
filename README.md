@@ -1,6 +1,6 @@
 # ffmpeg-avs-bin-9
 
-带 **AVS2 / AVS3 完整编解码能力** 的 FFmpeg **9.0.2** 静态构建，Windows / Linux / Android 三平台。
+带 **AVS2 / AVS3 完整编解码能力** 的 FFmpeg **9.1** 静态构建，Windows / Linux / Android 三平台。
 
 由 GitHub Actions 从源码构建，产物是可直接拷走使用的单文件可执行程序。
 
@@ -46,9 +46,9 @@ davs2 的位深是**编译期**固定的，`build/linux/configure` 甚至把 `--
 
 ---
 
-## 2. 为什么直接上 FFmpeg 9.0.2
+## 2. 为什么直接上 FFmpeg 9.1
 
-**`libuavs3e` 至今没有进入 FFmpeg 主线。** 9.0.2 的 `configure` 外部库清单里仍然只有
+**`libuavs3e` 至今没有进入 FFmpeg 主线。** 9.1 的 `configure` 外部库清单里仍然只有
 `libdavs2` / `libuavs3d` / `libxavs` / `libxavs2`，一个 `uavs3e` 字样都没有。
 所以 5 处接线 + 1 个 `libavcodec/libuavs3e.c` 依然要自己打 —— 这一步和 FFmpeg 版本无关。
 
@@ -58,16 +58,16 @@ davs2 的位深是**编译期**固定的，`build/linux/configure` 甚至把 `--
 「新式」写法（`.p.*` 字段、`FF_CODEC_ENCODE_CB`、`codec_internal.h`），这些 API 9.0 全都还在，
 只有像素格式声明这一项被搬了家（见下表最后一行）：
 
-| 依赖的 API | 9.0.2 现状 | 位置 |
+| 依赖的 API | 9.1 现状 | 位置（n9.1 行号） |
 |---|---|---|
-| `ff_alloc_packet` | 在（未弃用，`int64_t size`） | `libavcodec/encode.h:71` |
-| `FF_CODEC_ENCODE_CB` | 在 | `libavcodec/codec_internal.h:376` |
-| `CODEC_LONG_NAME` | 在 | `libavcodec/codec_internal.h:347` |
+| `ff_alloc_packet` | 在（未弃用，`int64_t size`） | `libavcodec/encode.h:72` |
+| `FF_CODEC_ENCODE_CB` | 在 | `libavcodec/codec_internal.h:394` |
+| `CODEC_LONG_NAME` | 在 | `libavcodec/codec_internal.h:365` |
 | `FFCodecDefault` | 在 | `libavcodec/codec_internal.h:97` |
 | `.p.capabilities` / `.p.priv_class` | 在（`AVCodec` 已全部 `.p.*` 化） | `libavcodec/codec.h` |
-| `avctx->coded_width/height` | 在 | `libavcodec/avcodec.h:619` |
+| `avctx->coded_width/height` | 在 | `libavcodec/avcodec.h:620` |
 | `FF_API_CODED_FRAME` | **已删除** | 封装里那圈 `#if` 会自然跳空，不是错误 |
-| `AVCodec.pix_fmts` | **已移除**（搬到 `FFCodec` 的匿名 union） | 必须改用 `CODEC_PIXFMTS()` 宏 |
+| `AVCodec.pix_fmts` | **已移除**（搬到 `FFCodec` 的匿名 union） | 必须改用 `CODEC_PIXFMTS()` 宏（`codec_internal.h:419`） |
 
 `libdavs2.c` / `libuavs3d.c` 这边同样没动：`davs2_decode_frame` 仍是
 `FF_CODEC_DECODE_CB` 三参回调，`libuavs3d.c` 里那段
@@ -75,14 +75,19 @@ davs2 的位深是**编译期**固定的，`build/linux/configure` 甚至把 `--
 
 ### 锚点是核对过的，不是猜的
 
-`n9.0.2` 上把 7 处锚点（configure 4 + Makefile 1 + allcodecs 1 + libdavs2 2）逐个实跑：
+`n9.1` 上把 8 处锚点（configure 4 + Makefile 1 + allcodecs 1 + libdavs2 色彩 2）
+逐个实跑，另加 2 项存在性检查：
 
 ```
-[OK] 替换成功 (configure)      ×4
+[OK] 替换成功 (configure)                  ×4
 [OK] 替换成功 (Makefile)
 [OK] 替换成功 (allcodecs.c)
-[OK] 替换成功 (libdavs2.c)     ×2
+[OK] 已放入 libavcodec/libuavs3e.c
+[OK] 替换成功 (libdavs2.c)                 ×2
 [OK] FFmpeg AVS 补丁应用完成
+--- 打完后的核对（local-verify-patch.sh）---
+[OK] libuavs3d 色彩搬运（存在性检查）
+ALL_ANCHORS_OK
 ```
 
 `scripts/patch-ffmpeg.sh` 里带了版本护栏：`case "${FFMPEG_VERSION}" in 9.*)`，
@@ -109,7 +114,7 @@ davs2 的位深是**编译期**固定的，`build/linux/configure` 甚至把 `--
 补丁用**严格锚点替换**（`edit_exact`）而不是 `patch(1)`：锚点必须精确匹配 N 次，
 不匹配就立即失败。`patch` 的 fuzz 和 `--forward` 会留下「看起来打了其实没打」的半残状态。
 
-### 9.0.2 的 configure 开关：逐个比对过
+### 9.1 的 configure 开关：逐个比对过
 
 本项目用到的 34 个 `--enable-*` / `--disable-*`，在 `configure --help` 的 306 个开关里
 逐个比对，只有 `--enable-libuavs3e` 不存在 —— 而它正是补丁 ① 要加的。
@@ -117,7 +122,7 @@ davs2 的位深是**编译期**固定的，`build/linux/configure` 甚至把 `--
 
 外部库最低版本也重新核对了一遍，我们锁的版本全部达标：
 
-| 库 | 9.0.2 要求 | 本仓库锁定 |
+| 库 | 9.1 要求 | 本仓库锁定 |
 |---|---|---|
 | davs2 | `>= 1.6.0` | fork master（`pc_ensure_version 1.6.0` 兜底） |
 | uavs3d | `>= 1.1.41` | `v1.1`（`pc_ensure_version 1.1.41` 兜底） |
@@ -139,7 +144,7 @@ davs2 的位深是**编译期**固定的，`build/linux/configure` 甚至把 `--
 | Android armv7 | ubuntu + **NDK r25c** | `ffmpeg` | API 19（Android 4.4.2），单文件 |
 | Android arm64 | 同上 | `ffmpeg` | API 21（Android 5.0） |
 
-### 最近一次构建实测（tag `v9.0.2-avs.1`，2026-10-28）
+### 上一版（FFmpeg 9.0.2）的构建实测（tag `v9.0.2-avs.1`，2026-10-28）
 
 | job | 耗时 | 结果 |
 |---|---|---|
@@ -392,16 +397,16 @@ PATH、`$TSDuck_HOME`、常见安装目录，也可以用 `--tsp` 指定。
 
 ---
 
-### 9.1 与 6.1.6 仓库的差异
+### 本仓与 6.1.6 仓库的差异
 
 两个仓库脚本同源，但**不是只有版本号不同**。已知差异：
 
-| 项 | 本仓（9.0.2） | `ffmpeg-avs-bin-6`（6.1.6） | 原因 |
+| 项 | 本仓（9.1） | `ffmpeg-avs-bin-6`（6.1.6） | 原因 |
 |---|---|---|---|
-| FFmpeg 版本 | 9.0.2 | 6.1.6 | 主线不同 |
+| FFmpeg 版本 | 9.1 | 6.1.6 | 主线不同 |
 | drawvg 滤镜 | ✅ 有 | ❌ 无 | 6.1 主线 configure 里没有 drawvg，装了 cairo 也无用武之地 |
 | cairo / pixman | ✅ 构建 | ❌ 不构建 | 同上 |
-| AMF 版本 | 1.5.2 | 1.4.33 | 门槛不同：9.0 要求 `MINOR>=5`，6.1 只要求 `MINOR>=4 且 RELEASE>=29`；1.4.33 满足 6.1 但不满足 9.0 |
+| AMF 版本 | 1.5.2 | 1.4.33 | 门槛不同：9.x 要求 `MINOR>=5`，6.1 只要求 `MINOR>=4 且 RELEASE>=29`；1.4.33 满足 6.1 但不满足 9.x |
 | 上游巡检 workflow | ✅ 有 | ❌ 无 | 6.1 是 EOL 主线，巡检无意义 |
 
 硬件编码器（nvenc / qsv / amf）两边都有。

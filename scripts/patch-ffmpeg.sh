@@ -2,7 +2,7 @@
 # ==============================================================================
 # 给 FFmpeg 9.x 补上 libuavs3e（AVS3 编码器）
 #
-# 为什么必须自己打：libuavs3e 从未进入 FFmpeg 主线。9.0.2 的 EXTERNAL_LIBRARY_LIST
+# 为什么必须自己打：libuavs3e 从未进入 FFmpeg 主线。9.1 的 EXTERNAL_LIBRARY_LIST
 # 里只有 libdavs2 / libuavs3d / libxavs / libxavs2，一个 uavs3e 字样都没有。
 #
 # 为什么只有 5 处接线：
@@ -13,7 +13,7 @@
 #     也就是说 allcodecs.c 里那行 extern 是**清单的唯一来源**，删掉它就等于
 #     编码器不存在 —— 它不是装饰，是必需项。
 #
-# 锚点全部来自 n9.0.2 原文，用 edit_exact 严格匹配：锚点漂移会立刻失败，
+# 锚点全部来自 n9.1 原文，用 edit_exact 严格匹配：锚点漂移会立刻失败，
 # 不会出现"看起来打了补丁其实没打"的沉默故障。
 # ==============================================================================
 
@@ -21,10 +21,10 @@ apply_ffmpeg_avs3_patch() {
   local dir="$1"
   [ -d "$dir" ] || die "apply_ffmpeg_avs3_patch: 目录不存在 $dir"
 
-  # ---- 版本护栏：这套锚点在 9.0.2 上逐个核对过（6.1.6 的旧仓库另有分支）----
+  # ---- 版本护栏：这套锚点在 9.1 上逐个核对过（6.1.6 的旧仓库另有分支）----
   # 6.1 之后 AVCodec 字段已全面搬进 .p.*，libuavs3e.c 用的正是新写法，
-  # 所以 6.1 / 7.x / 8.x / 9.x 理论上同源；但锚点只在 9.0.2 实编验证过，
-  # 换版本先跑一遍 scripts/local-verify-patch.sh。
+  # 所以 6.1 / 7.x / 8.x / 9.x 理论上同源；但锚点只在 9.1 实编验证过，
+  # 换版本先跑一遍 scripts/local-verify-patch.sh（3 秒出结果，不用等 CI）。
   case "${FFMPEG_VERSION}" in
     9.*) ;;
     *) die "AVS3 补丁只在 FFmpeg 9.x 验证过（当前 ${FFMPEG_VERSION}）。换版本请先重新核对锚点。" ;;

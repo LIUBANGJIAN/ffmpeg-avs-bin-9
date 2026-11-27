@@ -1,6 +1,6 @@
 # 技术文档 —— ffmpeg-avs-bin-9
 
-FFmpeg **9.0.2** + AVS2/AVS3 完整编解码能力的静态构建系统。
+FFmpeg **9.1** + AVS2/AVS3 完整编解码能力的静态构建系统。
 
 本文档面向**维护者**：讲清楚这套构建脚本是怎么组织的、每个设计决策为什么这么定、
 踩过哪些坑、改哪里会影响哪里。面向使用者的内容见 [README](../README.md)。
@@ -299,7 +299,7 @@ ENABLE_SVTAV1 / ENABLE_AOM / ENABLE_WEBP   # 默认全 0
 ### 6.1 为什么必须打补丁
 
 AVS3 编码器 `libuavs3e` **至今仍未进入 FFmpeg 主线**：
-9.0.2 的 `EXTERNAL_LIBRARY_LIST` 里只有 `libdavs2 / libuavs3d / libxavs / libxavs2`，
+9.1 的 `EXTERNAL_LIBRARY_LIST` 里只有 `libdavs2 / libuavs3d / libxavs / libxavs2`，
 没有任何 `uavs3e` 字样。
 
 所以要自己做两件事：
@@ -372,7 +372,7 @@ GitHub 的 tag tarball 里既没有 `VERSION` 也没有 `.git`，
 | `libvpl` | **`vpl.pc`**（不是 libvpl.pc） | configure 里写的是 `check_pkg_config libmfx "vpl >= 2.6"` |
 | `amf` | 无 .pc，只有头文件 | configure 检查 `AMF/core/Version.h` |
 
-**AMF 版本门槛**（v9.0.2 要求）：
+**AMF 版本门槛**（v9.1 要求）：
 
 ```
 (MAJOR << 48 | MINOR << 32 | RELEASE << 16 | BUILD) >= 0x1000500020000
@@ -522,9 +522,9 @@ AVS：  LIBDAVS2_DECODER / LIBUAVS3D_DECODER / LIBUAVS3E_ENCODER / LIBXAVS2_ENCO
 ```bash
 # 1. 确认 main 全绿（必须！tag 打在没验证的提交上会白等一轮）
 # 2. 打附注 tag
-git tag -a v9.0.2-avs.N -F -   # 消息会成为 release notes
+git tag -a v9.1-avs.N -F -   # 消息会成为 release notes
 # 3. 推送
-git push origin v9.0.2-avs.N
+git push origin v9.1-avs.N
 ```
 
 `generate_release_notes: true` 会从 tag 消息自动生成说明。

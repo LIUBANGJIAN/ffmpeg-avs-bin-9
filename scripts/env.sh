@@ -7,31 +7,37 @@
 #   ref  = tar 忽略（留空）；git 填分支 / 标签 / commit
 #
 # 想单独覆盖某个版本又不想改文件：
-#   FFMPEG_VERSION=9.0.1 ./scripts/build-linux.sh
+#   FFMPEG_VERSION=9.0.2 ./scripts/build-linux.sh
 # ==============================================================================
 
 # ------------------------------------------------------------------
 # FFmpeg 本体
 # ------------------------------------------------------------------
-# 这里跟的是 9.0.x（当前 9.0.2）—— 与另一个仓库 ffmpeg-avs-bin-6 的 6.1.6 分开，
+# 这里跟的是 9.1（2026-11-19 发布）—— 与另一个仓库 ffmpeg-avs-bin-6 的 6.1.6 分开，
 # 用来验证「AVS 全家桶在 FFmpeg 9 上还能不能编出来」。
 #
-# AVS3 编码器 libuavs3e 至今仍未进入 FFmpeg 主线：9.0.2 的 EXTERNAL_LIBRARY_LIST
+# AVS3 编码器 libuavs3e 至今仍未进入 FFmpeg 主线：9.1 的 EXTERNAL_LIBRARY_LIST
 # 里只有 libdavs2 / libuavs3d / libxavs / libxavs2，没有任何 uavs3e 字样。
 # 所以 5 处接线 + 1 个 libavcodec/libuavs3e.c 仍然要自己打。
 #
-# 9.0.2 上已逐条核对（见 README「为什么直接上 9.0.2」）：
-#   - 6 处 configure/Makefile/allcodecs 锚点全部精确匹配 1 次，未漂移
-#   - patches/libuavs3e.c 无需改一行：它本来就用的是 .p.* / FF_CODEC_ENCODE_CB /
-#     codec_internal.h 这套 6.1 之后的写法，9.0 里这些 API 一个没删
-#   - FF_API_CODED_FRAME 在 9.0 已被移除，封装里那圈 #if 会自然跳空（不是错误）
-#   - ff_alloc_packet / FF_CODEC_ENCODE_CB / CODEC_LONG_NAME / FFCodecDefault
-#     在 9.0 的 libavcodec/{encode,codec_internal}.h 里都还在
-#   - libdavs2.c / libuavs3d.c 的 AVS 封装与色彩搬运逻辑都在原位
+# 9.0.2 → 9.1 升级时逐条核对过（libavcodec MAJOR 保持 63，只升 MINOR 1→24，
+# 按 FFmpeg 的规矩这意味着只加 API 不删 API）：
+#   - 10 项锚点（configure 4 + Makefile 1 + allcodecs 1 + libdavs2 色彩 2 +
+#     2 项存在性检查）在 n9.1 上全部精确匹配，零漂移
+#   - patches/libuavs3e.c 无需改一行：CODEC_PIXFMTS / FF_CODEC_ENCODE_CB /
+#     CODEC_LONG_NAME / FFCodecDefault / ff_alloc_packet 定义与 9.0.2 一致
+#   - libdavs2.c / libuavs3d.c 在上游 9.0.2 → 9.1 之间**字节级完全相同**，
+#     我们叠加的色彩补丁语义不受影响
+#   - AMF 门槛仍是 0x1000500020000（MINOR>=5），现用的 1.5.2 继续够用
+#   - libvpl 仍要求 vpl >= 2.6，无需升级
+#   - drawvg / cairo 仍在（drawvg_filter_deps="cairo"），9 仓独有能力保住
 #
-# 已知未验证：9.0 对 xavs2 / xavs 两个老封装没有改动，但它们依赖的 API 在 8.0
-# 之后是否有语义变化，只能靠 CI 实编来证。
-FFMPEG_VERSION="${FFMPEG_VERSION:-9.0.2}"
+# 已知未验证：9.1 上尚未实编。锚点匹配只证明补丁能干净打上去，不证明确实能编出来；
+# xavs2 / xavs 两个老封装依赖的 API 在 9.x 内的语义变化只能靠 CI 实编来证。
+#
+# 想临时回到旧版（不用改文件）：
+#   FFMPEG_VERSION=9.0.2 ./scripts/build-linux.sh
+FFMPEG_VERSION="${FFMPEG_VERSION:-9.1}"
 FFMPEG_TAG="n${FFMPEG_VERSION}"
 FFMPEG_URL="https://github.com/FFmpeg/FFmpeg/archive/refs/tags/${FFMPEG_TAG}.tar.gz"
 

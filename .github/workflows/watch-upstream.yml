@@ -4,7 +4,7 @@ name: watch-upstream
 # 上游巡检 —— 每周看一眼 FFmpeg 有没有发新版本
 #
 # 三步：
-#   1) 检测  当前锁定的 9.0.2 与上游最新比（双源交叉，见 scripts/watch-upstream.py）
+#   1) 检测  当前锁定的 9.1 与上游最新比（双源交叉，见 scripts/watch-upstream.py）
 #   2) 验证  有新版本时，在源码临时副本上跑 local-verify-patch.sh 核对 10 项锚点
 #   3) 上报  锚点全绿 -> 自动开 PR 改版本号；锚点失配 / 新 major -> 开 issue
 #
