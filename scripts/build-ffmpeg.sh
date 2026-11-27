@@ -314,22 +314,6 @@ build_ffmpeg() {
   }
 
   # ---------------- 防静默失败断言 ----------------
-  # 版本串：先确认 configure 真的从我们写的文件里读到了版本。
-  # 上游改过文件名（VERSION -> FF_VERSION），写错时**不报错**，
-  # 只是退回 git describe 去撞父目录的 .git，产物变成 commit sha 或 tag 名。
-  # 放在这里而不是等 smoke test：早 40 分钟暴露。
-  local vh="$FF_DIR/libavutil/ffversion.h"
-  if [ -f "$vh" ]; then
-    if ! grep -q "\"${FFMPEG_VERSION}\"" "$vh"; then
-      warn "----- $vh -----"
-      cat "$vh" >&2 || true
-      die "版本串没被压住：期望 ${FFMPEG_VERSION}，configure 读到的不是它（上游又改了版本文件名？）"
-    fi
-    ok "断言通过：产物版本串 = ${FFMPEG_VERSION}"
-  else
-    die "找不到 $vh —— configure 没有生成版本头"
-  fi
-
   # 这四项是本项目的存在理由，任何一个没开成，产物就没有意义
   assert_config CONFIG_LIBDAVS2_DECODER   "AVS2 解码 (libdavs2)"
   assert_config CONFIG_LIBUAVS3D_DECODER  "AVS3 解码 (libuavs3d)"
@@ -377,6 +361,33 @@ build_ffmpeg() {
     || { dump_log "$blogf"; die "FFmpeg 安装失败"; }
 
   ok "FFmpeg 构建完成"
+
+  # ---------------- 版本串断言 ----------------
+  # `ffmpeg version <串>` 来自 libavutil/ffversion.h，由 ffbuild/version.sh 生成。
+  # 生成时机随上游变过：
+  #   6.x  configure 阶段就生成
+  #   9.x  改成 Makefile 规则，`make` 时才生成（configure 里连 version.sh 都不调）
+  # 所以只能在 make 之后查。写错版本文件名（VERSION / FF_VERSION）不会有任何报错，
+  # 只是静默退回 `git describe --tags --always` —— 在 CI 里逐级向上撞到本项目
+  # 仓库的 .git，产物版本串就变成 commit sha 或 tag 名，肉眼完全看不出 FFmpeg 版本。
+  local vh="$FF_DIR/libavutil/ffversion.h"
+  [ -f "$vh" ] || vh="$PREFIX/include/libavutil/ffversion.h"
+  if [ -f "$vh" ]; then
+    if grep -q "\"${FFMPEG_VERSION}\"" "$vh"; then
+      ok "断言通过：版本串 = ${FFMPEG_VERSION}"
+    else
+      warn "----- $vh -----"
+      cat "$vh" >&2 || true
+      die "版本串没被压住：期望 ${FFMPEG_VERSION}（上游又改了版本文件名？见 ffbuild/version.sh）"
+    fi
+  else
+    # 头文件位置再挪一次时的兜底：交叉编译产物也能直接 grep 二进制
+    if grep -aq "${FFMPEG_VERSION}" "$PREFIX/bin/ffmpeg${EXE:-}" 2>/dev/null; then
+      warn "没找到 ffversion.h，改从二进制里确认到 ${FFMPEG_VERSION}（头文件位置可能又变了）"
+    else
+      die "既找不到 ffversion.h，二进制里也没有 ${FFMPEG_VERSION} —— 版本串被污染了"
+    fi
+  fi
 
   # 产物存在性检查：configure 说启用了，不代表真的落地了
   local miss=""
