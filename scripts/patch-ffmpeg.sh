@@ -21,13 +21,15 @@ apply_ffmpeg_avs3_patch() {
   local dir="$1"
   [ -d "$dir" ] || die "apply_ffmpeg_avs3_patch: 目录不存在 $dir"
 
-  # ---- 版本护栏：这套锚点在 9.1 上逐个核对过（6.1.6 的旧仓库另有分支）----
+  # ---- 版本护栏：跟随 env.sh 声明的 FFMPEG_SERIES，而不是在这里再写一个 9 ----
   # 6.1 之后 AVCodec 字段已全面搬进 .p.*，libuavs3e.c 用的正是新写法，
   # 所以 6.1 / 7.x / 8.x / 9.x 理论上同源；但锚点只在 9.1 实编验证过，
   # 换版本先跑一遍 scripts/local-verify-patch.sh（3 秒出结果，不用等 CI）。
+  local series="${FFMPEG_SERIES:-}"
+  [ -n "$series" ] || die "FFMPEG_SERIES 未设置 —— 应由 scripts/env.sh 提供"
   case "${FFMPEG_VERSION}" in
-    9.*) ;;
-    *) die "AVS3 补丁只在 FFmpeg 9.x 验证过（当前 ${FFMPEG_VERSION}）。换版本请先重新核对锚点。" ;;
+    "${series}."*) ;;
+    *) die "AVS3 补丁只在 FFmpeg ${series}.x 上核对过（当前 ${FFMPEG_VERSION}）。跨 major 请先重新核对锚点，并改 env.sh 的 FFMPEG_SERIES。" ;;
   esac
 
   if [ -f "$dir/libavcodec/libuavs3e.c" ]; then

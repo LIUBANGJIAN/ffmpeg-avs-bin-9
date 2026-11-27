@@ -205,6 +205,25 @@ DEPS=(
 - `ref`：tar 忽略；git 填分支/标签/commit
 - 想临时覆盖版本：`FFMPEG_VERSION=9.0.1 ./scripts/build-linux.sh`
 
+**FFmpeg 本体是两个变量，职责分离**：
+
+| 变量 | 语义 | 修改者 |
+|---|---|---|
+| `FFMPEG_SERIES` | 跟随的主线（`9`） | 跨 major 时人工改，自动链路不碰 |
+| `FFMPEG_VERSION` | 当前线上版本 = 上次成功发布的那一版 | `build.yml` 的 `bump` job 自动回写 |
+
+`FFMPEG_VERSION` 写的字面量是**记录而非上限**：每日巡检实时查上游，有新的 9.x
+正式版就编译发版并把这里改成新版。保留字面量是为了本地构建有确定值、旧版可复现。
+
+文件末尾有一致性断言，半升级状态会当场失败：
+
+```bash
+if [ "${FFMPEG_VERSION%%.*}" != "$FFMPEG_SERIES" ]; then
+  echo "[env.sh] FFMPEG_VERSION=$FFMPEG_VERSION 与 FFMPEG_SERIES=$FFMPEG_SERIES 不一致" >&2
+  exit 1
+fi
+```
+
 ### 4.2 平台裁剪
 
 ```bash
@@ -327,11 +346,16 @@ AVS3 编码器 `libuavs3e` **至今仍未进入 FFmpeg 主线**：
 ### 6.3 版本护栏
 
 ```bash
+local series="${FFMPEG_SERIES:-}"
+[ -n "$series" ] || die "FFMPEG_SERIES 未设置 —— 应由 scripts/env.sh 提供"
 case "${FFMPEG_VERSION}" in
-  9.*) ;;
-  *) die "AVS3 补丁只在 FFmpeg 9.x 验证过..." ;;
+  "${series}."*) ;;
+  *) die "AVS3 补丁只在 FFmpeg ${series}.x 上核对过..." ;;
 esac
 ```
+
+护栏跟随 `FFMPEG_SERIES`，不在这里另写一个 `9` —— 换主线时只改一处。
+单独 source `patch-ffmpeg.sh`（没走 `env.sh`）会直接失败，不会静默放行。
 
 **换 FFmpeg 版本时的第一件事**：跑 `./scripts/local-verify-patch.sh`。
 3 秒告诉你 6 处锚点是否还成立，不用推 CI 等 50 分钟才发现锚点漂移。
@@ -630,9 +654,11 @@ FFMPEG_VERSION=9.2 ./scripts/local-verify-patch.sh    # 3 秒出结果
 # 锚点失配时，按 [FAIL] 那一行改 patch-ffmpeg.sh 里对应的 edit_exact
 ```
 
-**跨 major（10.x）必须人工**：`patch-ffmpeg.sh` 的护栏是 `case "${FFMPEG_VERSION}" in 9.*)`，
-直接改版本号会被拦；而且跨 major 通常伴随 API 删除（6.1.6 → 9.0.2 就碰上
-`AVCodec.pix_fmts` 被整个移除）。自动链路遇到新 major 会主动停手并开 issue。
+**跨 major（10.x）必须人工**：`patch-ffmpeg.sh` 的护栏比对 `FFMPEG_SERIES`，
+只改 `FFMPEG_VERSION` 会在 `env.sh` 的一致性断言处就红；而且跨 major 通常伴随
+API 删除（6.1.6 → 9.0.2 就碰上 `AVCodec.pix_fmts` 被整个移除）。自动链路遇到新
+major 会主动停手并开 issue。真要跨 major，是同时改 `FFMPEG_SERIES` 与
+`FFMPEG_VERSION` 两行，再重跑锚点验证。
 
 **升级前必查**：
 - `EXTERNAL_LIBRARY_LIST` 里是否已收录 `libuavs3e`（若已收录，补丁可以删）

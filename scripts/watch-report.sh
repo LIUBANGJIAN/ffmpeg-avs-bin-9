@@ -90,7 +90,7 @@ if [ "$KIND" = "major" ]; then
   {
     printf '上游出现 **FFmpeg %s**，当前锁定 **%s**。\n\n' "$VER" "$CUR"
     printf '这是**跨 major** 的升级，不能按常规点版本处理：\n\n'
-    printf -- '- `scripts/patch-ffmpeg.sh` 里的版本护栏是 `case "${FFMPEG_VERSION}" in 9.*)`，直接改版本号会被拦下\n'
+    printf -- '- `scripts/patch-ffmpeg.sh` 的护栏跟随 `env.sh` 的 `FFMPEG_SERIES`，只改 `FFMPEG_VERSION` 会被当场拦下\n'
     printf -- '- 跨 major 通常伴随 API 删除，6.1.6 → 9.0.2 那次就碰上 `AVCodec.pix_fmts` 被整个移除\n'
     printf -- '- 10 项锚点里至少「configure 库清单」「libuavs3d 色彩搬运」两处需要重新核对\n\n'
     printf '### 建议步骤\n\n'

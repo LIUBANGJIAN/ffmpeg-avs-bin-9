@@ -90,8 +90,8 @@ davs2 的位深是**编译期**固定的，`build/linux/configure` 甚至把 `--
 ALL_ANCHORS_OK
 ```
 
-`scripts/patch-ffmpeg.sh` 里带了版本护栏：`case "${FFMPEG_VERSION}" in 9.*)`，
-换大版本会直接 `die` 而不是悄悄打歪。
+`scripts/patch-ffmpeg.sh` 里带了版本护栏：拿 `env.sh` 的 `FFMPEG_SERIES`（当前 `9`）
+去比对版本号，跨大版本会直接 `die` 而不是悄悄打歪。护栏里没有第二个写死的 `9`。
 
 ### 补丁到底改了什么（6 处文本替换 + 1 个新文件）
 
@@ -351,9 +351,23 @@ ANDROID_NDK_HOME=/opt/ndk-r25c ./scripts/build-android.sh arm64
 | 每日 11:23（北京时间） | 巡检上游；有新的 9.x 正式版才编译发布，没有就 30 秒结束 |
 | 手动 | 可指定版本，留空用 `scripts/env.sh` 锁定的版本 |
 
-**版本号只有一处**：`scripts/env.sh` 的 `FFMPEG_VERSION`。workflow 里没有任何
-版本字面量，靠 `FFMPEG_VERSION` 环境变量注入（`env.sh` 写的是 `${FFMPEG_VERSION:-...}`），
-产物名也跟着变。所以追新版**不用改 build 脚本**，改一行或干脆不改（自动巡检会改）。
+**版本号只有一处**：`scripts/env.sh`。workflow 里没有任何版本字面量，全部靠环境变量
+注入（`env.sh` 写的是 `${FFMPEG_VERSION:-...}`），产物名、tag 名自动跟着变。
+
+`env.sh` 里是两个变量，职责不同，别混：
+
+| 变量 | 含义 | 谁来改 |
+|---|---|---|
+| `FFMPEG_SERIES` | 跟随哪条**主线**（当前 `9`） | 只有跨 major 才动，且必须人工 |
+| `FFMPEG_VERSION` | 当前**线上那一版**（上次成功发布的版本） | 由 CI 的 `bump` job 自动回写 |
+
+所以 `FFMPEG_VERSION` 里那个字面量**不是天花板，是记录** —— 每天巡检发现 9.x 有新
+正式版，会自动预验锚点、四平台编译、打 tag 发版，成功后把它改成新版本并提交。
+它留在文件里只是为了本地构建有确定值、旧版可复现、产物来源可审计；
+留空的话任何本地构建都要联网问上游，构建就不可复现了。
+
+两条护栏互相兜底：`env.sh` 末尾有 `FFMPEG_VERSION` 主版本必须等于 `FFMPEG_SERIES`
+的断言（改一半会当场红），`patch-ffmpeg.sh` 再用 `FFMPEG_SERIES` 挡一次。
 
 **为什么推 main 能一次搞定、不用跑两轮**：tag 由本 workflow 用 `GITHUB_TOKEN` 推出，
 而 `GITHUB_TOKEN` 推的事件不会触发新的 workflow 运行。这本来是坑（自动提交无法触发构建），

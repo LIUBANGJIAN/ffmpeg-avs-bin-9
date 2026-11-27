@@ -8,19 +8,40 @@
 #
 # 想单独覆盖某个版本又不想改文件：
 #   FFMPEG_VERSION=9.0.2 ./scripts/build-linux.sh
+# 想换跟随的主线（跨 major，需人工核对锚点）：
+#   FFMPEG_SERIES=10 ./scripts/local-verify-patch.sh
 # ==============================================================================
 
 # ------------------------------------------------------------------
 # FFmpeg 本体
+#
+# 这里有两个变量，职责严格分开，别混：
+#
+#   FFMPEG_SERIES   跟随哪条主线（当前 9.x）。**只有跨 major 才改这一行**，
+#                   而跨 major 必须人工接入 —— 补丁锚点和封装代码都是按实际
+#                   源码逐条核对过的，不能靠改版本号猜。
+#
+#   FFMPEG_VERSION  当前线上跑的那一版 = 上一次成功发布的那一版。
+#                   ⚠️ 由 CI 自动维护，不是上限：
+#                      build.yml 的 bump job 在「四平台全绿 + 发版成功」后
+#                      会改写这一行并提交（带 [skip ci]）。
+#                   每天 11:23（北京时间）巡检上游，出现新的 9.x 正式版就
+#                   预验锚点 -> 四平台编译 -> 打 tag 发版 -> 回写这里。
+#                   所以它回答的是「现在用的是哪一版」，不是「最多能到哪一版」。
 # ------------------------------------------------------------------
-# 这里跟的是 9.1（2026-11-19 发布）—— 与另一个仓库 ffmpeg-avs-bin-6 的 6.1.6 分开，
-# 用来验证「AVS 全家桶在 FFmpeg 9 上还能不能编出来」。
+FFMPEG_SERIES="${FFMPEG_SERIES:-9}"
+
+# 为什么留一个字面量：本地构建 / 复现旧版 / 审计产物来源都需要一个确定值。
+# 若这里留空，任何本地构建立刻都要联网问上游，构建变得不可复现。
+#
+# 与另一个仓库 ffmpeg-avs-bin-6 的 6.1.6 分开，本仓用来验证
+# 「AVS 全家桶在 FFmpeg 9 上还能不能编出来」。
 #
 # AVS3 编码器 libuavs3e 至今仍未进入 FFmpeg 主线：9.1 的 EXTERNAL_LIBRARY_LIST
 # 里只有 libdavs2 / libuavs3d / libxavs / libxavs2，没有任何 uavs3e 字样。
 # 所以 5 处接线 + 1 个 libavcodec/libuavs3e.c 仍然要自己打。
 #
-# 9.0.2 → 9.1 升级时逐条核对过（libavcodec MAJOR 保持 63，只升 MINOR 1→24，
+# 9.0.2 → 9.1 这一版的核对记录（libavcodec MAJOR 保持 63，只升 MINOR 1→24，
 # 按 FFmpeg 的规矩这意味着只加 API 不删 API）：
 #   - 10 项锚点（configure 4 + Makefile 1 + allcodecs 1 + libdavs2 色彩 2 +
 #     2 项存在性检查）在 n9.1 上全部精确匹配，零漂移
@@ -32,12 +53,19 @@
 #   - libvpl 仍要求 vpl >= 2.6，无需升级
 #   - drawvg / cairo 仍在（drawvg_filter_deps="cairo"），9 仓独有能力保住
 #
-# 已知未验证：9.1 上尚未实编。锚点匹配只证明补丁能干净打上去，不证明确实能编出来；
-# xavs2 / xavs 两个老封装依赖的 API 在 9.x 内的语义变化只能靠 CI 实编来证。
+# 已实编验证：9.1 在 CI 上四平台全绿（windows / linux / android-armv7 / arm64）。
 #
 # 想临时回到旧版（不用改文件）：
 #   FFMPEG_VERSION=9.0.2 ./scripts/build-linux.sh
 FFMPEG_VERSION="${FFMPEG_VERSION:-9.1}"
+
+# 一致性护栏：版本必须落在声明的主线上。防的是「手改成 10.0 但 SERIES 还写 9」
+# 这种半升级状态 —— 让它在这里就红，而不是打到第 3 个锚点才炸。
+if [ "${FFMPEG_VERSION%%.*}" != "$FFMPEG_SERIES" ]; then
+  echo "[env.sh] FFMPEG_VERSION=$FFMPEG_VERSION 与 FFMPEG_SERIES=$FFMPEG_SERIES 不一致" >&2
+  echo "[env.sh] 跨 major 需人工接入：先核对锚点，再同时改这两行" >&2
+  exit 1
+fi
 FFMPEG_TAG="n${FFMPEG_VERSION}"
 FFMPEG_URL="https://github.com/FFmpeg/FFmpeg/archive/refs/tags/${FFMPEG_TAG}.tar.gz"
 

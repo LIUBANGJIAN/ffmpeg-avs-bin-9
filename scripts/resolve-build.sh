@@ -134,7 +134,7 @@ case "$EVENT" in
       PUBLISH="false"
       REASON="上游无新版本，本轮不编译${NOTE:+（$NOTE）}"
     elif [ "$MANUAL" = "true" ]; then
-      # 跨 major：patch-ffmpeg.sh 的护栏只认 9.*，硬上只会四个 job 一起红
+      # 跨 major：patch-ffmpeg.sh 的护栏认 env.sh 的 FFMPEG_SERIES，硬上只会四个 job 一起红
       VER="$CUR"
       PUBLISH="false"
       REASON="上游出现新 major $LATEST，需人工接入，不自动跟进"
@@ -145,7 +145,7 @@ case "$EVENT" in
 
 ### 为什么不能自动跟
 
-- \`scripts/patch-ffmpeg.sh\` 的版本护栏是 \`case \"\${FFMPEG_VERSION}\" in 9.*)\`，直接改版本号会被拦下
+- \`scripts/patch-ffmpeg.sh\` 的护栏跟随 \`env.sh\` 的 \`FFMPEG_SERIES\`，只改 \`FFMPEG_VERSION\` 会被当场拦下
 - 跨 major 通常伴随 API 删除：6.1.6 → 9.0.2 那次就碰上 \`AVCodec.pix_fmts\` 被整个移除
 - 冒烟能过的前提下，还需要过一遍色彩信令 / 逐帧像素 / 编码 MD5 的能力回归
 
